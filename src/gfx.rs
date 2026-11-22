@@ -534,6 +534,8 @@ fn box_pass(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: usize, horizontal
 /// Decode an image file (PNG etc.) with WIC into premultiplied BGRA, shrunk to fit `max_px` if larger.
 pub fn image_file(path: &str, max_px: u32) -> Option<Pixmap> {
     unsafe {
+        // self-contained COM init (balanced on drop); this must not depend on a caller's lingering COM
+        let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
         let f: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
         let wp = wide(path);
         let dec = f.CreateDecoderFromFilename(PCWSTR(wp.as_ptr()), None, GENERIC_READ, WICDecodeMetadataCacheOnDemand).ok()?;
@@ -544,6 +546,7 @@ pub fn image_file(path: &str, max_px: u32) -> Option<Pixmap> {
 /// Decode an encoded image held in memory (album art).
 pub fn image_bytes(bytes: &[u8], max_px: u32) -> Option<Pixmap> {
     unsafe {
+        let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
         let f: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
         let st = f.CreateStream().ok()?;
         st.InitializeFromMemory(bytes).ok()?;
