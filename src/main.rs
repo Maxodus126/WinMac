@@ -643,6 +643,7 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     }
     let want_widgets = cfg.desktop_widgets;
     let want_switcher = cfg.app_switcher;
+    let check_updates = cfg.check_updates;
     let started = [cfg.menu_bar, want_widgets, want_switcher, cfg.claude_usage_oauth];
     let mut app = App { dock: Dock::new(hwnd, cfg), genie, bar, fly: None, win: None, fullscreen: false, started };
     app.apply_genie_timing();
@@ -659,7 +660,9 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     if want_switcher {
         switcher::start();
     }
-    update::start();
+    if check_updates {
+        update::start();
+    }
     if std::env::args().any(|a| a == "--settings") {
         app.open_settings();
     }

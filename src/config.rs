@@ -38,6 +38,9 @@ pub struct Config {
     pub desktop_widgets: bool,
     /// macOS-style Alt+Tab: one icon per app in a frosted panel (replaces the Windows switcher).
     pub app_switcher: bool,
+    /// Check GitHub for new releases at startup and periodically (a small phone-home to the GitHub API).
+    /// Off disables the updater entirely.
+    pub check_updates: bool,
     /// How long the Genie minimize takes, in ms (restoring takes a little less).
     pub genie_ms: f64,
     /// Multiplier on how fast icons grow and shrink under the pointer.
@@ -109,7 +112,7 @@ impl Default for Config {
             .collect(),
             icon_size: 52.0,
             magnify: 1.75,
-            hide_taskbar: true,
+            hide_taskbar: false,
             menu_bar: true,
             genie: true,
             icon_tiles: true,
@@ -124,7 +127,8 @@ impl Default for Config {
             show_recents: true,
             downloads_stack: true,
             desktop_widgets: true,
-            app_switcher: true,
+            app_switcher: false,
+            check_updates: true,
             battery_percent: false,
             genie_ms: 560.0,
             magnify_speed: 1.0,
@@ -165,6 +169,7 @@ impl Config {
         b("BatteryPercent", &mut c.battery_percent);
         b("DesktopWidgets", &mut c.desktop_widgets);
         b("AppSwitcher", &mut c.app_switcher);
+        b("CheckUpdates", &mut c.check_updates);
         b("ReduceMotion", &mut c.reduce_motion);
         let mut f = |k: &str, d: &mut f64, lo: f64, hi: f64| {
             if let Some(x) = v.remove(k).and_then(|x| x.as_f64()) {
@@ -242,6 +247,7 @@ impl Config {
             "BatteryPercent": self.battery_percent,
             "DesktopWidgets": self.desktop_widgets,
             "AppSwitcher": self.app_switcher,
+            "CheckUpdates": self.check_updates,
             "GenieDuration": self.genie_ms,
             "MagnifySpeed": self.magnify_speed,
             "AutoHideDelay": self.hide_delay_ms,

@@ -1,0 +1,79 @@
+   Compiling winmac v1.0.1 (C:\Users\aflin\Music\1_PROJECT_\MAC DOS)
+warning: value assigned to `drawn_hover` is never read
+   --> src\menu.rs:235:27
+    |
+235 |     let mut drawn_hover = Some(usize::MAX);
+    |                           ^^^^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+249 |         drawn_hover = None;
+    |         ------------------ `drawn_hover` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `tok30` is never read
+  --> src\ai_usage.rs:82:9
+   |
+73 | pub struct Session {
+   |            ------- field in this struct
+...
+82 |     pub tok30: u64,
+   |         ^^^^^
+   |
+   = note: `Session` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `1` is never read
+  --> src\menubar.rs:60:19
+   |
+60 |     Flyout(Extra, i32, i32),
+   |     ------        ^^^
+   |     |
+   |     field in this variant
+   |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+60 -     Flyout(Extra, i32, i32),
+60 +     Flyout(Extra, (), i32),
+   |
+
+warning: `winmac` (bin "winmac" test) generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.08s
+     Running unittests src\main.rs (target\debug\build\winmac/97ed4795813171dc\out\winmac-97ed4795813171dc.exe)
+
+running 33 tests
+test ai_usage::tests::ai_real ... ignored
+test apps::tests::apps_snapshot ... ignored
+test claude_oauth::tests::oauth_live ... ignored
+test dock::apps_icon_tests::apps_icon_snapshot ... ignored
+test fly_ai::tests::ai_snap ... ignored
+test fly_settings::tests::snapshot ... ignored
+test ai_usage::tests::blocks ... ok
+test flyout::glass_bench::glass_cut_time ... ignored
+test genie::bench::genie_bench ... ignored
+test genie::bench::gpu_shot ... ignored
+test ai_usage::tests::iso ... ok
+test launchpad::tests::launchpad_snapshot ... ignored
+test fly_settings::tests::every_key_has_an_id ... ok
+test fly_settings::tests::switches_toggle_and_sliders_clamp ... ok
+test ai_usage::tests::codex_deltas ... ok
+test i18n::tests::falls_back_to_english ... ok
+test launchpad::tests::junk_is_skipped ... ok
+test ai_usage::tests::names ... ok
+test claude_oauth::tests::parses_usage ... ok
+test launchpad::tests::paging_and_selection ... ok
+test launchpad::tests::search_ranks_prefix_first ... ok
+test shell::launch_fallback::unassociated_file_opens_in_notepad ... ignored
+test apps::tests::categories_from_names ... ok
+test spotlight::tests::spotlight_snapshot ... ignored
+test genie::bench::identity_matches_texture ... ok
+test update::tests::live_check ... ignored
+test spotlight::tests::results_rank_and_end_with_the_web ... ok
+test update::tests::compares_versions ... ok
+test apps::tests::scrolling_stays_in_range ... ok
+test apps::tests::recents_first_then_all_and_categories_filter ... ok
+test gfx::tests::png_roundtrip ... ok
+test shell::tests::packaged_icons ... ok
+test launchpad::tests::touchpad_swipe_follows_and_snaps ... ok
+
+test result: ok. 20 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
