@@ -41,6 +41,19 @@ jobs:
           # LF line ending, so `sha256sum -c` reads it.
           [IO.File]::WriteAllText("$PWD\target\release\winmac.exe.sha256", "$hash  winmac.exe`n")
 
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $nsis = Get-ChildItem "C:\Program Files*\NSIS\makensis.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS not found" }
+          & $nsis.FullName -DVERSION=$tag "tools\winmac-setup.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+
       - name: Publish release
         shell: pwsh
         env:
@@ -48,6 +61,6 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           gh release create $tag `
-            target\release\winmac.exe target\release\winmac.exe.sha256 `
+            target\release\winmac.exe target\release\winmac.exe.sha256 target\release\winmac-setup.exe `
             --title "WIN MAC $($tag.TrimStart('v'))" `
             --notes-from-tag

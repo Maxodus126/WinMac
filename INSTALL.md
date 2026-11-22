@@ -1,7 +1,21 @@
 # Memasang WIN MAC
 
-Panduan untuk pengguna akhir (Windows 11). WIN MAC adalah **satu file executable** —
-tidak ada installer, tidak ada dependensi runtime, tidak perlu admin.
+Panduan untuk pengguna akhir (Windows 11). Ada dua cara memasang:
+
+- **Installer (`winmac-setup.exe`)** — disarankan untuk pengguna umum: wizard, shortcut Start Menu, dan entri *Add/Remove Programs*. Per-user, tanpa perlu admin.
+- **Portabel (`winmac.exe`)** — cukup jalankan satu file; tanpa installer.
+
+Keduanya sama-sama aplikasi native Rust, tanpa dependensi runtime eksternal.
+
+## Cara 1 — Installer (disarankan)
+
+1. Unduh **`winmac-setup.exe`** dari halaman rilis.
+2. Jalankan installer → klik **Next**.
+3. Pada halaman **License Agreement**, **centang** *"I have read and accept the license agreement"* (wajib) agar tombol lanjut aktif.
+4. Pilih opsi: *Start Menu shortcut*, *desktop shortcut*, dan *jalankan setelah pemasangan* → klik **Install**.
+5. Selesai. WIN MAC terpasang di `%LOCALAPPDATA%\Programs\WIN MAC` dan terdaftar di **Add/Remove Programs**.
+
+**Uninstall (via installer):** buka **Settings → Apps → Installed apps** (atau Control Panel → Programs) → cari **WIN MAC** → **Uninstall**. Uninstaller otomatis memulihkan taskbar Windows lalu menghapus file.
 
 ## 1. Persyaratan
 
@@ -65,9 +79,8 @@ Ini hanya muncul sekali per mesin (atau setelah OS me-reset reputasi file). Sema
 
 ## 7. Menghapus instalasi
 
-1. Tutup WIN MAC.
-2. Hapus folder program (contoh: `%LOCALAPPDATA%\Programs\WIN MAC`).
-3. (Opsional) Hapus pengaturan & cache: hapus folder `%APPDATA%\WinMac`.
+- **Jika memakai installer:** gunakan **Settings → Apps → Installed apps → WIN MAC → Uninstall** (uninstaller otomatis memulihkan taskbar & menghapus file).
+- **Jika portabel:** 1) tutup WIN MAC, 2) hapus folder program (contoh `%LOCALAPPDATA%\Programs\WIN MAC`), 3) (opsional) hapus `%APPDATA%\WinMac` untuk reset penuh.
 
 ---
 
