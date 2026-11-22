@@ -9,8 +9,12 @@
 !include "nsDialogs.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.0.2"
+  !define VERSION "1.0.3"
 !endif
+
+; Repo root = the folder above the tools/ dir holding this script. NSIS resolves relative
+; paths against the script's own directory, so use absolute paths from here.
+!define ROOT "${__FILEDIR__}\.."
 
 !define APPNAME   "WIN MAC"
 !define COMPANY    "maxodus"
@@ -18,10 +22,10 @@
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinMac"
 
 Name "${APPNAME} ${VERSION}"
-OutFile "target\release\winmac-setup.exe"
+OutFile "${ROOT}\target\release\winmac-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\WIN MAC"
-Icon "resources\winmac.ico"
-UninstallIcon "resources\winmac.ico"
+Icon "${ROOT}\resources\winmac.ico"
+UninstallIcon "${ROOT}\resources\winmac.ico"
 RequestExecutionLevel user
 XPStyle on
 BrandingText "maxodus"
@@ -29,8 +33,8 @@ SetCompressor lzma
 
 ; ---- Modern UI settings ----
 !define MUI_ABORTWARNING
-!define MUI_ICON "resources\winmac.ico"
-!define MUI_UNICON "resources\winmac.ico"
+!define MUI_ICON "${ROOT}\resources\winmac.ico"
+!define MUI_UNICON "${ROOT}\resources\winmac.ico"
 !define MUI_WELCOMEPAGE_TITLE "Welcome to WIN MAC ${VERSION}"
 !define MUI_WELCOMEPAGE_TEXT "A macOS-style dock and menu bar for Windows 11.$\r$\n$\r$\nDeveloped by maxodus.$\r$\nThis installer will place WIN MAC in your own user folder — no administrator rights required."
 !define MUI_FINISHPAGE_TITLE "Installation complete"
@@ -112,8 +116,8 @@ Page custom OptCreate OptLeave
 ; ============================================================
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /oname=winmac.exe "target\release\winmac.exe"
-  File /oname=winmac.exe.sha256 "target\release\winmac.exe.sha256"
+  File /oname=winmac.exe "${ROOT}\target\release\winmac.exe"
+  File /oname=winmac.exe.sha256 "${ROOT}\target\release\winmac.exe.sha256"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   ; optional shortcuts
