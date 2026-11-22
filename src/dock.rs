@@ -403,7 +403,10 @@ impl Dock {
         self.screen_h - self.win_h
     }
     fn icon_px(&self) -> u32 {
-        (self.cfg.icon_size * self.cfg.magnify * self.dpi).ceil() as u32
+        // icon_size is clamped to >=16 on load, but stay defensive: a 0 px pixmap
+        // would cascade into panics in icon decoding.
+        let size = (self.cfg.icon_size.max(1.0) * self.cfg.magnify * self.dpi).ceil();
+        (size.max(1.0) as u32).min(4096)
     }
 
     pub fn new(hwnd: HWND, cfg: Config) -> Dock {
@@ -452,6 +455,10 @@ impl Dock {
 
     pub fn shutdown(&mut self) {
         self.unreserve();
+        // persist any badge "seen" marks that were deferred during the session
+        if let Some(seen) = self.seen.as_mut() {
+            seen.flush();
+        }
         unsafe {
             let _ = DeregisterShellHookWindow(self.hwnd);
         }
@@ -1297,7 +1304,13 @@ impl Dock {
         let chosen = self.popup(&entries, anchor, dpi);
         self.wake();
         let d = chosen.and_then(|c| acts.get_mut(c).and_then(|a| a.take()))?;
-        let i = idx.unwrap_or(0);
+        // The modal menu ran a nested message loop; if an item was animating out and got removed
+        // meanwhile, `idx` may be stale. Don't index past the current item list.
+        let i = match idx {
+            Some(i) if i < self.items.len() => i,
+            Some(_) => return None,
+            None => 0,
+        };
         match d {
             Do::Hide => self.set_auto_hide(!self.cfg.auto_hide),
             Do::QuitDock => return Some(Act::Quit),
@@ -2012,7 +2025,13 @@ impl Dock {
                     ev(DockEv::BackdropRecheck);
                 }
             }
-            DockEv::Toasts => self.poll_toasts(),
+            DockEv::Toasts => {
+                self.poll_toasts();
+                // cheap: only writes when a badge mark changed since the last flush
+                if let Some(seen) = self.seen.as_mut() {
+                    seen.flush();
+                }
+            }
             DockEv::DragFiles(on) => {
                 self.drag_files = on;
                 if !on {

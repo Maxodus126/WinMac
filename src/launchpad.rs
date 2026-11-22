@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use tiny_skia::Pixmap;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY,
     SIGDN_PARENTRELATIVEPARSING,
@@ -111,29 +111,36 @@ fn enumerate() -> Vec<(String, String)> {
 #[cfg(test)]
 pub(crate) fn load_now() {
     let apps = enumerate().into_iter().map(|(name, spec)| App { icon: crate::shell::icon(&spec, ICON_PX).map(Arc::new), name, spec }).collect();
-    *CATALOG.lock().unwrap() = apps;
+    *CATALOG.lock().unwrap_or_else(|p| p.into_inner()) = apps;
 }
 
 pub(crate) fn refresh() {
     if LOADING.swap(true, Ordering::AcqRel) {
         return;
     }
-    let ok = std::thread::Builder::new().name("launchpad".into()).spawn(|| {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    // Reset LOADING even if the worker panics (poisoned lock, OOM), so the catalog never
+    // gets stuck permanently un-refreshed. Runs on the worker thread.
+    struct ResetLoading;
+    impl Drop for ResetLoading {
+        fn drop(&mut self) {
+            LOADING.store(false, Ordering::Release);
         }
+    }
+    let ok = std::thread::Builder::new().name("launchpad".into()).spawn(|| {
+        let _reset = ResetLoading;
+        let _com = crate::ComInit::new(COINIT_APARTMENTTHREADED);
         let list = enumerate();
         {
-            let mut cat = CATALOG.lock().unwrap();
+            let mut cat = CATALOG.lock().unwrap_or_else(|p| p.into_inner());
             let old: std::collections::HashMap<String, Option<Arc<Pixmap>>> = cat.drain(..).map(|a| (a.spec, a.icon)).collect();
             *cat = list.into_iter().map(|(name, spec)| App { icon: old.get(&spec).cloned().flatten(), name, spec }).collect();
         }
         notify();
-        let todo: Vec<String> = CATALOG.lock().unwrap().iter().filter(|a| a.icon.is_none()).map(|a| a.spec.clone()).collect();
+        let todo: Vec<String> = CATALOG.lock().unwrap_or_else(|p| p.into_inner()).iter().filter(|a| a.icon.is_none()).map(|a| a.spec.clone()).collect();
         for (i, spec) in todo.iter().enumerate() {
             if let Some(pm) = crate::shell::icon(spec, ICON_PX) {
                 let pm = Arc::new(pm);
-                if let Some(a) = CATALOG.lock().unwrap().iter_mut().find(|a| &a.spec == spec) {
+                if let Some(a) = CATALOG.lock().unwrap_or_else(|p| p.into_inner()).iter_mut().find(|a| &a.spec == spec) {
                     a.icon = Some(pm);
                 }
             }
@@ -142,7 +149,6 @@ pub(crate) fn refresh() {
             }
         }
         notify();
-        LOADING.store(false, Ordering::Release);
     });
     if ok.is_err() {
         LOADING.store(false, Ordering::Release);
@@ -745,6 +751,7 @@ mod tests {
     #[test]
     #[ignore]
     fn launchpad_snapshot() {
+        use windows::Win32::System::Com::CoInitializeEx;
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }

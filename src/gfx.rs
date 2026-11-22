@@ -30,6 +30,10 @@ pub struct Surface {
 
 impl Surface {
     pub fn new(w: u32, h: u32) -> Option<Surface> {
+        // a bogus size (0, or so large that w*h*4 overflows) would make the DIB and the slice below invalid
+        if w == 0 || h == 0 || (w as u64) * (h as u64) > (u32::MAX as u64) / 4 {
+            return None;
+        }
         unsafe {
             let dc = CreateCompatibleDC(HDC::default());
             let bmi = BITMAPINFO {
@@ -54,7 +58,8 @@ impl Surface {
     pub fn pixmap(&mut self) -> PixmapMut<'_> {
         let len = (self.w * self.h * 4) as usize;
         let bytes = unsafe { std::slice::from_raw_parts_mut(self.bits, len) };
-        PixmapMut::from_bytes(bytes, self.w, self.h).unwrap()
+        // Surface::new rejects 0 and overflowing sizes, so this only fails on an invalid DIB
+        PixmapMut::from_bytes(bytes, self.w, self.h).expect("surface DIB is well formed")
     }
 
     /// Push the pixels to the layered window and move/resize it in the same call.
@@ -570,7 +575,9 @@ unsafe fn decode(f: &IWICImagingFactory, dec: &IWICBitmapDecoder, max_px: u32) -
 /// Write opaque BGRA pixels as a PNG with WIC. Callable from any thread (initializes COM for it).
 pub fn save_png(path: &str, w: u32, h: u32, bgra: &[u8]) -> bool {
     unsafe {
-        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+        // Balance the COM init this call attempts (only if it actually initialized this thread, so a
+        // caller's pre-existing STA apartment is left untouched). Lives for the whole call.
+        let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
         let run = || -> windows::core::Result<()> {
             let f: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
             let stream = f.CreateStream()?;
@@ -742,6 +749,8 @@ pub fn liquid_glass(
 thread_local! {
     static D3D: std::cell::RefCell<Option<(windows::Win32::Graphics::Direct3D11::ID3D11Device, windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext)>> =
         const { std::cell::RefCell::new(None) };
+    /// Whether multithread protection could be enabled on this thread's context (see d3d()).
+    static D3D_MT_OK: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// The one D3D11 device the process uses (live glass backdrop and GPU genie). Each device costs the Intel iGPU
@@ -769,11 +778,29 @@ pub fn d3d() -> Option<(windows::Win32::Graphics::Direct3D11::ID3D11Device, wind
                 .ok()?;
             }
             let (dev, ctx): (ID3D11Device, ID3D11DeviceContext) = (dev?, ctx?);
-            if let Ok(mt) = ctx.cast::<ID3D11Multithread>() {
-                let _ = unsafe { mt.SetMultithreadProtected(true) };
-            }
+            // Microsoft docs: "By default, multithread protection is turned off" and applications "can only
+            // use one thread with the immediate context at a time". This context is shared across threads
+            // (dock render + the backdrop capture callback), so protection MUST be on. If we can't turn it
+            // on, record that so cross-thread consumers can degrade instead of risking UB.
+            // SetMultithreadProtected returns a BOOL (whether protection was *already* on), not an error
+            // code; the only real failure signal is the interface cast itself.
+            let mt_ok = match ctx.cast::<ID3D11Multithread>() {
+                Ok(mt) => {
+                    let _ = unsafe { mt.SetMultithreadProtected(true) };
+                    true
+                }
+                Err(_) => false,
+            };
+            D3D_MT_OK.set(mt_ok);
             *c = Some((dev, ctx));
         }
         c.clone()
     })
+}
+
+/// True if the current thread's D3D11 context has multithread protection enabled, so it may be safely
+/// shared across threads. Consumers that share the immediate context (the backdrop capture) should check
+/// this and degrade (disable the feature) when it is false.
+pub fn d3d_multithread_ok() -> bool {
+    D3D_MT_OK.with(|c| c.get())
 }

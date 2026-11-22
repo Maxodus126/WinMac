@@ -4,7 +4,6 @@
 //! behind it, reserved as an AppBar so maximized windows stop under it. Drawn only when something changes.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use tiny_skia::{Color, FillRule, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 use windows::core::w;
@@ -773,10 +772,10 @@ impl MenuBar {
         match d {
             Do::None => {}
             Do::Keys(k) => {
-                // hand focus back to the app the user was in, then send it the shortcut
+                // hand focus back to the app the user was in, then send it the shortcut.
+                // Activate on the UI thread; the key press itself is instant and does not block.
                 if self.target_ok() {
                     shell::activate(self.target);
-                    std::thread::sleep(Duration::from_millis(90));
                     key(k);
                 }
             }
@@ -956,11 +955,14 @@ Open the download page?")) {
             self.surface = Surface::new(w, h);
         }
         let dpi = self.dpi as f32;
-        let mut pm = Pixmap::new(w, h).unwrap();
+        // Allocation can fail on a huge or odd screen; skip this frame instead of taking the app down.
+        let (Some(mut pm), Some(mut content)) = (Pixmap::new(w, h), Pixmap::new(w, h)) else {
+            self.dirty = true; // try again next tick
+            return;
+        };
         // macOS 26: no bar at all, the content sits on the wallpaper. The bar's own pixels stay at alpha 1 so
         // the whole strip still takes clicks; hover / open highlights go on that layer, under the content.
         pm.fill(Color::from_rgba8(0, 0, 0, 1));
-        let mut content = Pixmap::new(w, h).unwrap();
         for (i, s) in self.slots.iter().enumerate() {
             let lit = if self.open == Some(i) { 0x40 } else if self.hover == Some(i) { 0x30 } else { 0 };
             if lit > 0 {

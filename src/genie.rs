@@ -4,7 +4,9 @@
 //! pushed each frame (UpdateLayeredWindow with a source point), so the cost follows what is on screen.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
+use std::sync::mpsc;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -339,6 +341,33 @@ fn window_rect(h: HWND) -> Option<RECT> {
     ((r.right - r.left) >= 80 && (r.bottom - r.top) >= 60).then_some(r)
 }
 
+struct SnapJob {
+    file: String,
+    img: Arc<Pixmap>,
+    hv: isize,
+}
+
+static PERSIST_TX: OnceLock<mpsc::Sender<SnapJob>> = OnceLock::new();
+
+/// One persistent worker serializes snapshot saves (see Genie::persist): a burst of minimizes must not
+/// spawn an unbounded number of short-lived threads that race on forget() and can interleave with
+/// load_persisted() reading a half-written file.
+fn ensure_persist_worker() {
+    let _ = PERSIST_TX.get_or_init(|| {
+        let (tx, rx): (mpsc::Sender<SnapJob>, mpsc::Receiver<SnapJob>) = mpsc::channel();
+        let _ = std::thread::Builder::new().name("persist".into()).spawn(move || {
+            for job in rx {
+                let _ = std::fs::create_dir_all(snap_dir());
+                forget(job.hv);
+                if !crate::gfx::save_png(&job.file, job.img.width(), job.img.height(), job.img.data()) {
+                    log(&format!("could not save {}", job.file));
+                }
+            }
+        });
+        tx
+    });
+}
+
 fn snap_dir() -> String {
     format!("{}\\WinMac\\snaps", std::env::var("LOCALAPPDATA").unwrap_or_default())
 }
@@ -401,6 +430,9 @@ static ARMED_FOR: AtomicIsize = AtomicIsize::new(0);
 static ARM_X: AtomicI32 = AtomicI32::new(0);
 static ARM_Y: AtomicI32 = AtomicI32::new(0);
 static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
+/// Set when the mouse-hook thread should stop. Closes the race where `stop_mouse_hook` runs
+/// before the thread has published its thread id: the starting thread sees this and self-terminates.
+static HOOK_REQ_STOP: AtomicBool = AtomicBool::new(false);
 
 fn hwnd_of(v: isize) -> HWND {
     HWND(v as *mut _)
@@ -442,20 +474,25 @@ fn start_mouse_hook() {
     if HOOK_THREAD.load(Ordering::Relaxed) != 0 {
         return;
     }
+    HOOK_REQ_STOP.store(false, Ordering::Relaxed);
     let _ = std::thread::Builder::new().name("mouse-hook".into()).spawn(|| unsafe {
         HOOK_THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
         let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), HINSTANCE::from(GetModuleHandleW(None).unwrap_or_default()), 0);
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+        while !HOOK_REQ_STOP.load(Ordering::Relaxed) && GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
             DispatchMessageW(&msg);
         }
         if let Ok(h) = hook {
             let _ = UnhookWindowsHookEx(h);
         }
+        // don't clobber a newer thread's id if one was started meanwhile
+        let _ = HOOK_THREAD.compare_exchange(GetCurrentThreadId(), 0, Ordering::Relaxed, Ordering::Relaxed);
     });
 }
 
 fn stop_mouse_hook() {
+    // Request the stop first so a thread that hasn't published its id yet self-terminates.
+    HOOK_REQ_STOP.store(true, Ordering::Relaxed);
     let tid = HOOK_THREAD.swap(0, Ordering::Relaxed);
     if tid != 0 {
         unsafe {
@@ -689,13 +726,10 @@ impl Genie {
         let hv = h.0 as isize;
         let file = format!("{}\\{hv}_{pid}_{}_{}_{}_{}.png", snap_dir(), r.x as i32, r.y as i32, r.w as i32, r.h as i32);
         let img = s.img.clone();
-        let _ = std::thread::Builder::new().name("persist".into()).spawn(move || {
-            let _ = std::fs::create_dir_all(snap_dir());
-            forget(hv);
-            if !crate::gfx::save_png(&file, img.width(), img.height(), img.data()) {
-                log(&format!("could not save {file}"));
-            }
-        });
+        // One long-lived worker serializes saves: a burst of minimizes must not spawn an unbounded
+        // number of threads that all race on forget() and interleave with load_persisted().
+        ensure_persist_worker();
+        let _ = PERSIST_TX.get().map(|tx| tx.send(SnapJob { file, img, hv }));
     }
 
     /// Snapshot of a minimized window from disk (the hwnd may have been reused: the pid must still match).

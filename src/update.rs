@@ -42,13 +42,13 @@ pub fn check() -> Result<Option<(String, String)>, String> {
     let tag = v["tag_name"].as_str().unwrap_or_default().to_string();
     let url = v["html_url"].as_str().map(str::to_string).unwrap_or_else(|| format!("https://github.com/{REPO}/releases/latest"));
     let found = newer(&tag, CURRENT).then(|| (tag.trim_start_matches('v').to_string(), url));
-    *LATEST.lock().unwrap() = found.clone().map(|(version, url)| Release { version, url });
+    *LATEST.lock().unwrap_or_else(|p| p.into_inner()) = found.clone().map(|(version, url)| Release { version, url });
     Ok(found)
 }
 
 /// The newer release found by the last check, if any: (version, page url).
 pub fn available() -> Option<(String, String)> {
-    LATEST.lock().unwrap().as_ref().map(|r| (r.version.clone(), r.url.clone()))
+    LATEST.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map(|r| (r.version.clone(), r.url.clone()))
 }
 
 pub fn start() {

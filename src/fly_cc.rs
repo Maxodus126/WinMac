@@ -35,7 +35,7 @@ static LAST_SAVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 static LAST_WIFI: Mutex<String> = Mutex::new(String::new());
 
 fn session() -> Option<Session> {
-    let mut m = MANAGER.lock().unwrap();
+    let mut m = MANAGER.lock().unwrap_or_else(|p| p.into_inner());
     if m.is_none() {
         *m = Manager::RequestAsync().and_then(|o| o.get()).ok();
     }
@@ -104,9 +104,9 @@ fn read_media(st: &Mutex<State>) {
         }
         let playing = s.GetPlaybackInfo().and_then(|i| i.PlaybackStatus()).is_ok_and(|x| x == Playback::Playing);
         // keep the old art while the song is the same
-        let same = st.lock().unwrap().media.as_ref().is_some_and(|m| m.title == title);
+        let same = st.lock().unwrap_or_else(|p| p.into_inner()).media.as_ref().is_some_and(|m| m.title == title);
         let art = if same {
-            st.lock().unwrap().media.as_mut().and_then(|m| m.art.take())
+            st.lock().unwrap_or_else(|p| p.into_inner()).media.as_mut().and_then(|m| m.art.take())
         } else {
             (|| -> Option<Pixmap> {
                 let stream = p.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
@@ -124,13 +124,13 @@ fn read_media(st: &Mutex<State>) {
         Some(Media { title, artist, playing, art })
     };
     let m = read();
-    st.lock().unwrap().media = m;
+    st.lock().unwrap_or_else(|p| p.into_inner()).media = m;
 }
 
 impl ControlCenter {
     pub fn new() -> ControlCenter {
         // only cheap reads here: the panel opens at once and the worker fills in the rest
-        let st = State { wifi_on: true, wifi_sub: LAST_WIFI.lock().unwrap().clone(), bt: None, ..Default::default() };
+        let st = State { wifi_on: true, wifi_sub: LAST_WIFI.lock().unwrap_or_else(|p| p.into_inner()).clone(), bt: None, ..Default::default() };
         ControlCenter {
             hwnd: 0, st: Arc::new(Mutex::new(st)), dark: sysctl::dark(), power: sysctl::power_mode(),
             saver: LAST_SAVER.load(std::sync::atomic::Ordering::Relaxed), drag: None,
@@ -146,19 +146,17 @@ impl ControlCenter {
     /// Latest-value-wins setter: one worker drains the slot so a fast drag never queues a backlog.
     fn push_job<T: Send + 'static + Copy>(&self, slot: &Job<T>, v: T, apply: fn(T)) {
         let start = {
-            let mut s = slot.lock().unwrap();
+            let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
             s.0 = Some(v);
             !std::mem::replace(&mut s.1, true)
         };
         if start {
             let slot = slot.clone();
             std::thread::spawn(move || {
-                unsafe {
-                    let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
-                }
+                let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
                 loop {
                     let next = {
-                        let mut s = slot.lock().unwrap();
+                        let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
                         let n = s.0.take();
                         if n.is_none() {
                             s.1 = false;
@@ -182,10 +180,10 @@ impl ControlCenter {
     fn set_slider(&mut self, id: u32, v: f32) {
         self.drag = Some((id, v));
         if id == ID_VOL {
-            self.st.lock().unwrap().volume = Some(v);
+            self.st.lock().unwrap_or_else(|p| p.into_inner()).volume = Some(v);
             self.push_job(&self.vol_job.clone(), v, sysctl::set_volume);
         } else {
-            self.st.lock().unwrap().brightness = Some(v);
+            self.st.lock().unwrap_or_else(|p| p.into_inner()).brightness = Some(v);
             self.push_job(&self.bright_job.clone(), (v * 100.0).round() as u8, sysctl::set_brightness);
         }
     }
@@ -223,25 +221,25 @@ impl Content for ControlCenter {
         self.work(|st| {
             let on = fly_wifi::is_on();
             let sub = wifi_sub(on);
-            *LAST_WIFI.lock().unwrap() = sub.clone();
+            *LAST_WIFI.lock().unwrap_or_else(|p| p.into_inner()) = sub.clone();
             {
-                let mut s = st.lock().unwrap();
+                let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
                 s.wifi_on = on;
                 s.wifi_sub = sub;
                 s.volume = sysctl::volume();
             }
             let saver = sysctl::power_saver();
             LAST_SAVER.store(saver, std::sync::atomic::Ordering::Relaxed);
-            st.lock().unwrap().saver = Some(saver);
+            st.lock().unwrap_or_else(|p| p.into_inner()).saver = Some(saver);
             read_media(st);
             let bt = sysctl::bluetooth().map(|r| r.State().is_ok_and(|x| x == windows::Devices::Radios::RadioState::On));
             {
-                let mut s = st.lock().unwrap();
+                let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
                 s.bt = bt;
                 s.bt_looked = true;
             }
             let b = sysctl::brightness();
-            st.lock().unwrap().brightness = b.map(|b| b as f32 / 100.0);
+            st.lock().unwrap_or_else(|p| p.into_inner()).brightness = b.map(|b| b as f32 / 100.0);
         });
     }
     fn tick(&mut self) {
@@ -268,7 +266,7 @@ impl Content for ControlCenter {
         match id {
             ID_WIFI_DOT => {
                 let on = {
-                    let mut s = self.st.lock().unwrap();
+                    let mut s = self.st.lock().unwrap_or_else(|p| p.into_inner());
                     s.wifi_on = !s.wifi_on;
                     s.wifi_sub = if s.wifi_on { "Turning on…".into() } else { "Off".into() };
                     s.wifi_on
@@ -276,13 +274,13 @@ impl Content for ControlCenter {
                 self.work(move |st| {
                     fly_wifi::set_on(on);
                     std::thread::sleep(std::time::Duration::from_millis(if on { 3000 } else { 100 }));
-                    st.lock().unwrap().wifi_sub = wifi_sub(on);
+                    st.lock().unwrap_or_else(|p| p.into_inner()).wifi_sub = wifi_sub(on);
                 });
             }
             ID_WIFI_TEXT => return Cmd::OpenWifi,
             ID_BT_DOT => {
                 let on = {
-                    let mut s = self.st.lock().unwrap();
+                    let mut s = self.st.lock().unwrap_or_else(|p| p.into_inner());
                     let Some(b) = s.bt else { return Cmd::None };
                     s.bt = Some(!b);
                     !b
@@ -306,7 +304,7 @@ impl Content for ControlCenter {
                 self.work(|st| {
                     let saver = sysctl::power_saver();
                     LAST_SAVER.store(saver, std::sync::atomic::Ordering::Relaxed);
-                    st.lock().unwrap().saver = Some(saver);
+                    st.lock().unwrap_or_else(|p| p.into_inner()).saver = Some(saver);
                 });
             }
             ID_POWER_TEXT => return Cmd::Launch("ms-settings:powersleep".into()),
@@ -318,7 +316,7 @@ impl Content for ControlCenter {
 
     fn draw(&mut self, ui: &mut Ui) -> f32 {
         let w = ui.w;
-        let st = self.st.lock().unwrap();
+        let st = self.st.lock().unwrap_or_else(|p| p.into_inner());
         let col = (w - 8.0) / 2.0;
         let row_h = 32.0;
 

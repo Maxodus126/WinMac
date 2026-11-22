@@ -225,7 +225,8 @@ impl Gpu {
     pub fn draw(&mut self, img: &Arc<Pixmap>, rows: &[(f64, f64, f64)], origin: (f64, f64)) -> windows::core::Result<()> {
         let srv = self.texture(img)?;
         let Some((msaa, rtv)) = self.msaa.clone() else { return Ok(()) };
-        let n = rows.len() - 1;
+        // A single row (or an empty slice) would otherwise underflow; guard defensively.
+        let n = rows.len().saturating_sub(1).max(1);
         unsafe {
             let mut m = D3D11_MAPPED_SUBRESOURCE::default();
             self.ctx.Map(&self.vbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut m))?;

@@ -43,7 +43,7 @@ use std::cell::RefCell;
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, RECT};
 use windows::Win32::Graphics::Dwm::DwmFlush;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -72,6 +72,26 @@ thread_local! {
 
 pub fn push(e: Ev) {
     EVENTS.with(|q| q.borrow_mut().push(e));
+}
+
+/// RAII balance for CoInitializeEx on worker threads. It only CoUninitializes when THIS call actually
+/// initialized the thread (S_OK / S_FALSE); if the thread already had COM in another model
+/// (RPC_E_CHANGED_MODE) it leaves that untouched — blindly pairing would corrupt the main thread's STA.
+pub(crate) struct ComInit {
+    armed: bool,
+}
+impl ComInit {
+    pub(crate) fn new(flags: COINIT) -> ComInit {
+        let armed = unsafe { CoInitializeEx(None, flags).is_ok() };
+        ComInit { armed }
+    }
+}
+impl Drop for ComInit {
+    fn drop(&mut self) {
+        if self.armed {
+            unsafe { let _ = CoUninitialize(); }
+        }
+    }
 }
 
 /// Our windows must never take focus from the user's app; a menu may have lifted the flag.
@@ -470,6 +490,9 @@ fn low_integrity() -> bool {
         }
         let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
         let count = *GetSidSubAuthorityCount(label.Label.Sid) as u32;
+        if count == 0 {
+            return false; // no authorities: nothing to compare, not low-integrity
+        }
         *GetSidSubAuthority(label.Label.Sid, count - 1) < 0x2000
     }
 }
@@ -555,12 +578,15 @@ fn main() {
         return;
     }
     // no console in a windows-subsystem exe: keep the last panic where it can be read
+    // Best-effort: anything that fails here must not double-panic.
     std::panic::set_hook(Box::new(|info| {
-        let _ = std::fs::create_dir_all(config::dir());
-        let bt = std::backtrace::Backtrace::force_capture();
-        let _ = std::fs::write(format!("{}\\panic.log", config::dir()), format!("{info}\n{bt}"));
-        taskbar::restore(true);
-        genie::restore_system_animation();
+        if let Ok(dir) = std::fs::create_dir_all(config::dir()) {
+            let _ = dir;
+            let bt = std::backtrace::Backtrace::force_capture();
+            let _ = std::fs::write(format!("{}\\panic.log", config::dir()), format!("{info}\n{bt}"));
+            let _ = taskbar::restore(true);
+            let _ = genie::restore_system_animation();
+        }
     }));
     // one dock at a time; the C# build uses the same name, so the two never run together
     // after "Restart WIN MAC" the old process may still be shutting down: wait for it a few seconds

@@ -132,8 +132,13 @@ pub fn restore(force: bool) {
     unwatch();
     let Some(main) = main_bar() else { return };
     unsafe {
-        let mut d = data(main, if hidden { ORIGINAL.get() } else { 0 });
-        SHAppBarMessage(ABM_SETSTATE, &mut d);
+        if hidden {
+            // We hid the bar: replay the AppBar state it had before we touched it. When `force`
+            // is set but *we* never hid it, leave the AppBar state alone — writing state 0 would
+            // silently turn off the user's autohide preference (and steal screen space).
+            let mut d = data(main, ORIGINAL.get());
+            SHAppBarMessage(ABM_SETSTATE, &mut d);
+        }
         for b in bars() {
             let _ = ShowWindow(b, SW_SHOW);
         }

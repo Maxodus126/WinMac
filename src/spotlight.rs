@@ -2,6 +2,7 @@
 //! with the results as you type. Apps first (the same list the Apps window shows), then a web search.
 //! Opens from the menu bar's magnifier or Alt+Space.
 
+use std::borrow::Cow;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -153,7 +154,10 @@ impl Spotlight {
             None => 1.0,
         };
         let view = self.h - BAR;
-        let (hits, sel, q) = (self.hits.clone(), self.sel, self.query.trim().to_string());
+        // Borrow instead of cloning per frame: draw_rows runs every frame while typing.
+        let sel = self.sel;
+        let q = self.query.trim();
+        let hits = &self.hits;
         let apps = &self.apps;
         ui.layer(-PAD.0, BAR, cw + 2.0 * PAD.0, view, 1.0, 1.0, [0.0, 0.0, 0.0, 0.0], |ui| {
             ui.line(0.0, BAR + 0.5, cw, BAR + 0.5, 1.0, white(0x1F));
@@ -177,11 +181,11 @@ impl Spotlight {
                             Some(img) => ui.image(img, 0.0, ty - 14.0, 28.0, 28.0),
                             None => ui.fill(2.0, ty - 12.0, 24.0, 24.0, 6.0, white(0x22)),
                         }
-                        (app.name.clone(), t("Application"))
+                        (Cow::Borrowed(app.name.as_str()), t("Application"))
                     }
                     None => {
                         ui.glyph(14.0, ty, '\u{E774}', 17.0, white(fade(0xE0)));
-                        (format!("{} \u{201C}{q}\u{201D}", t("Search the Web for")), "")
+                        (Cow::Owned(format!("{} \u{201C}{q}\u{201D}", t("Search the Web for"))), "")
                     }
                 };
                 let kw = if kind.is_empty() { 0.0 } else { ui.text_w(kind, 12.0, 400) + 12.0 };
