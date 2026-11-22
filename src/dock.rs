@@ -167,7 +167,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
 pub fn create_window() -> HWND {
     unsafe {
         let hinst = GetModuleHandleW(None).unwrap();
-        let class = w!("MacDockRs");
+        let class = w!("WinMacRs");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
@@ -178,7 +178,7 @@ pub fn create_window() -> HWND {
         RegisterClassW(&wc);
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            class, w!("MacDock"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
+            class, w!("WIN MAC"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
         )
         .unwrap()
     }
@@ -1245,7 +1245,7 @@ impl Dock {
                 add(Entry::item("Dock Settings…"), Some(Do::Settings));
                 if !self.cfg.menu_bar {
                     add(Entry::Sep, None);
-                    add(Entry::item("Quit MacDock"), Some(Do::QuitDock));
+                    add(Entry::item("Quit WIN MAC"), Some(Do::QuitDock));
                 }
                 anchor = Anchor::Point(p.x, p.y);
             }

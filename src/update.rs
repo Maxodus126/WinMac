@@ -1,11 +1,11 @@
-//! Update check: asks GitHub for the latest MacDock release at start and every 6 hours, on a worker thread.
+//! Update check: asks GitHub for the latest WinMac release at start and every 6 hours, on a worker thread.
 //! A newer version than this build puts a dot on the menu bar logo and an "Update Available" item in its menu,
 //! which opens the release page. Nothing is downloaded or installed by itself.
 
 use std::sync::Mutex;
 use std::time::Duration;
 
-const REPO: &str = "GodrezJr2/MacDock";
+const REPO: &str = "Maxodus126/WinMac";
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Release {
@@ -33,7 +33,7 @@ pub fn check() -> Result<Option<(String, String)>, String> {
     let (status, body) = crate::claude_oauth::get(
         "api.github.com",
         &format!("/repos/{REPO}/releases/latest"),
-        "Accept: application/vnd.github+json\r\nUser-Agent: MacDock\r\n",
+        "Accept: application/vnd.github+json\r\nUser-Agent: WinMac\r\n",
     )?;
     if status != 200 {
         return Err(format!("GitHub answered {status}"));

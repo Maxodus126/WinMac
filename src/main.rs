@@ -1,4 +1,4 @@
-//! MacDock in Rust: dock (and, as the port goes on, menu bar and genie) on plain Win32. Every window's
+//! WIN MAC in Rust: dock (and, as the port goes on, menu bar and genie) on plain Win32. Every window's
 //! procedure only queues events; the App below handles them and runs one frame loop paced by DwmFlush
 //! that sleeps in GetMessage once nothing moves.
 
@@ -563,11 +563,11 @@ fn main() {
         genie::restore_system_animation();
     }));
     // one dock at a time; the C# build uses the same name, so the two never run together
-    // after "Restart MacDock" the old process may still be shutting down: wait for it a few seconds
+    // after "Restart WIN MAC" the old process may still be shutting down: wait for it a few seconds
     let tries = if std::env::args().any(|a| a == "--restart") { 50 } else { 1 };
     let mut _single = None;
     for i in 0..tries {
-        let m = unsafe { CreateMutexW(None, true, w!("MacDock.Singleton")) };
+        let m = unsafe { CreateMutexW(None, true, w!("WinMac.Singleton")) };
         if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
             _single = Some(m);
             break;
@@ -590,10 +590,10 @@ fn main() {
         unsafe {
             MessageBoxW(
                 None,
-                w!("MacDock is running at low integrity, so it cannot reserve screen space or save settings.
+                w!("WIN MAC is running at low integrity, so it cannot reserve screen space or save settings.
 
-Copy macdock.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\MacDock) and start it from there."),
-                w!("MacDock"),
+Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MAC) and start it from there."),
+                w!("WIN MAC"),
                 MB_OK | MB_ICONWARNING,
             );
         }

@@ -19,7 +19,7 @@ const CATS: [(&str, &[&str]); 9] = [
         "nvidia", "amd", "intel", "msi", "asus", "armoury", "predator", "acer", "logitech", "razer", "corsair",
         "driver", "update", "backup", "vpn", "tailscale", "wireguard", "cpu-z", "hwinfo", "afterburner", "rufus",
         "snipping", "clock", "alarm", "print", "scan", "cleanup", "defrag", "odbc", "services", "event viewer",
-        "performance", "resource monitor", "sense", "macdock", "bluetooth", "quick assist", "winget", "installer",
+        "performance", "resource monitor", "sense", "winmac", "bluetooth", "quick assist", "winget", "installer",
     ]),
     ("Productivity & Finance", &[
         "word", "excel", "powerpoint", "outlook", "onenote", "office", "notion", "obsidian", "calendar", "mail",
@@ -328,7 +328,7 @@ impl Apps {
                 ui.fill(tx + end.min(max) + 1.0, my - 9.0, 1.5, 18.0, 0.0, caret);
             }
         }
-        // "…": MacDock's settings (where the classic full-screen Launchpad can be picked)
+        // "…": WIN MAC's settings (where the classic full-screen Launchpad can be picked)
         let (mx, mw) = (cw - 26.0, 26.0);
         if ui.hit(ID_MORE, mx, 1.0, mw, 26.0) {
             ui.fill(mx, 1.0, mw, 26.0, 13.0, white(if ui.pressed == Some(ID_MORE) { 0x30 } else { 0x1A }));

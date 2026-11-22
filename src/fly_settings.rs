@@ -1,9 +1,9 @@
-//! MacDock Settings: every setting in one floating window, applied as it changes.
+//! WIN MAC Settings: every setting in one floating window, applied as it changes.
 //!
 //! The window keeps its own copy of the config for drawing and sends each change to the app as
 //! `Ev::Settings`; the app writes it into the dock's config (the one that gets saved) and redoes what
 //! depends on it. Menu bar, desktop widgets, the Alt+Tab switcher and the Claude login option are set up at
-//! start, so changing them lights up "Restart MacDock". Close / minimize / full screen are macOS traffic
+//! start, so changing them lights up "Restart WIN MAC". Close / minimize / full screen are macOS traffic
 //! lights; the title row drags the window.
 
 use crate::config::{self, Config};
@@ -484,7 +484,7 @@ impl Content for Settings {
         let cw = ui.w;
         let col = (cw - COL_GAP) / 2.0;
         traffic_lights(ui, TITLE_H / 2.0);
-        let title = t("MacDock Settings");
+        let title = t("WIN MAC Settings");
         let tw = ui.text_w(title, 13.0, 600);
         ui.text_mid((cw - tw) / 2.0, TITLE_H / 2.0, title, 13.0, 600, white(0xD9), 0.0);
         let ver = format!("v{}", crate::update::CURRENT);
@@ -502,10 +502,10 @@ impl Content for Settings {
         ry = self.group(ui, x, ry + 18.0, col, "General", &general_rows());
         ry += 16.0;
         let due = self.restart_due();
-        let msg = t(if due { "Restart MacDock to apply the menu bar, widgets and Alt+Tab changes." } else { "Changes apply right away and are saved to config.json." });
+        let msg = t(if due { "Restart WIN MAC to apply the menu bar, widgets and Alt+Tab changes." } else { "Changes apply right away and are saved to config.json." });
         ry += ui.text_wrap(x + 4.0, ry, msg, 11.5, 400, if due { white(0xD9) } else { white(0x80) }, col - 8.0) + 10.0;
         let bw = (col - 10.0) / 2.0;
-        button(ui, ID_RESTART, x, ry, col, t("Restart MacDock"), due);
+        button(ui, ID_RESTART, x, ry, col, t("Restart WIN MAC"), due);
         ry += 40.0;
         button(ui, ID_RESET, x, ry, bw, t("Reset Animations"), false);
         button(ui, ID_CONFIG, x + bw + 10.0, ry, bw, t("Open config.json"), false);

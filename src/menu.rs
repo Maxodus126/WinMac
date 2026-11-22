@@ -157,7 +157,7 @@ fn register() {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: GetModuleHandleW(None).unwrap().into(),
-            lpszClassName: w!("MacDockMenu"),
+            lpszClassName: w!("WinMacMenu"),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             ..Default::default()
         };
@@ -224,7 +224,7 @@ pub fn popup(owner: HWND, entries: &[Entry], at: Anchor, dpi: f64) -> Option<usi
     let mut surface = Surface::new(wpx as u32, hpx as u32);
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, w!("MacDockMenu"), w!("MacDock Menu"), WS_POPUP,
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, w!("WinMacMenu"), w!("WIN MAC Menu"), WS_POPUP,
             x, yy, wpx, hpx, HWND::default(), HMENU::default(), GetModuleHandleW(None).unwrap(), None,
         )
     };

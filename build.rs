@@ -5,7 +5,7 @@ use embed_manifest::{embed_manifest, new_manifest};
 
 fn main() {
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
-        embed_manifest(new_manifest("MacDock").dpi_awareness(DpiAwareness::PerMonitorV2)).expect("unable to embed manifest");
+        embed_manifest(new_manifest("WinMac").dpi_awareness(DpiAwareness::PerMonitorV2)).expect("unable to embed manifest");
     }
     println!("cargo:rerun-if-changed=build.rs");
 }

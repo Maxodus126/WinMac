@@ -388,7 +388,7 @@ mod tests {
             branch: Some("master".into()), last, tok5, tok30: tok5 * 3, total,
         };
         let sessions = vec![
-            se("Claude Code", "MacDock AI usage menu bar", "MacDock", Some("claude-opus-5-5"), now - 5, 300_000, 4_100_000),
+            se("Claude Code", "WIN MAC AI usage menu bar", "WIN MAC", Some("claude-opus-5-5"), now - 5, 300_000, 4_100_000),
             se("Claude Code", "Lintasi driver GPS report", "armada", Some("claude-sonnet-5-5"), now - 40, 120_000, 900_000),
             se("Codex", "Fix flaky routing tests", "RouteBench", Some("gpt-5.5-codex"), now - 900, 0, 55_000),
         ];

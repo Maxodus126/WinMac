@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copy one GitHub release of MacDock (notes + macdock.exe + macdock.exe.sha256) into a Gitea release on the home
+# Copy one GitHub release of WinMac (notes + winmac.exe + winmac.exe.sha256) into a Gitea release on the home
 # server, so every version is kept there too. GitHub Actions builds the exe; this only mirrors it, no Rust needed.
 #   tools/mirror-release.sh v0.2.0
 # Waits up to 20 minutes for the GitHub release to have both files (the Windows build takes ~2.5 min).
@@ -8,9 +8,9 @@
 set -euo pipefail
 
 tag="${1:?usage: mirror-release.sh <tag>}"
-gh_repo="GodrezJr2/MacDock"
+gh_repo="Maxodus126/WinMac"
 gitea="${GITEA_URL:-http://127.0.0.1:3030}"
-gitea_repo="${GITEA_REPO:-jay/MacDock}"
+gitea_repo="${GITEA_REPO:-jay/WinMac}"
 token="${GITEA_TOKEN:-$(cat ~/.gitea_token)}"
 auth=(-H "Authorization: token $token")
 
@@ -19,18 +19,18 @@ trap 'rm -rf "$work"' EXIT
 
 # poll the plain download URLs (not rate limited); the API (60 calls/hour without a token) is used once below
 dl="https://github.com/$gh_repo/releases/download/$tag"
-want=macdock.exe.sha256
-[ "${NO_SHA_OK:-0}" = 1 ] && want=macdock.exe
+want=winmac.exe.sha256
+[ "${NO_SHA_OK:-0}" = 1 ] && want=winmac.exe
 echo "waiting for GitHub release $tag"
 for i in $(seq 1 80); do
   curl -fsIL -o /dev/null "$dl/$want" && break
   [ "$i" = 80 ] && { echo "GitHub release $tag not complete after 20 min"; exit 1; }
   sleep 15
 done
-curl -fsSL "$dl/macdock.exe" -o "$work/macdock.exe"
-curl -fsSL "$dl/macdock.exe.sha256" -o "$work/macdock.exe.sha256" 2>/dev/null || (cd "$work" && sha256sum macdock.exe > macdock.exe.sha256)
+curl -fsSL "$dl/winmac.exe" -o "$work/winmac.exe"
+curl -fsSL "$dl/winmac.exe.sha256" -o "$work/winmac.exe.sha256" 2>/dev/null || (cd "$work" && sha256sum winmac.exe > winmac.exe.sha256)
 curl -fsS -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$gh_repo/releases/tags/$tag" -o "$work/gh.json"
-(cd "$work" && sha256sum -c macdock.exe.sha256)
+(cd "$work" && sha256sum -c winmac.exe.sha256)
 
 name="$(jq -r '.name' "$work/gh.json")"
 jq -n --arg t "$tag" --arg n "$name" --slurpfile g "$work/gh.json" \
@@ -49,7 +49,7 @@ id="$(jq -r .id "$work/gt.json")"
 for aid in $(jq -r '.assets[]?.id' "$work/gt.json"); do
   curl -fsS -X DELETE "${auth[@]}" "$gitea/api/v1/repos/$gitea_repo/releases/$id/assets/$aid" >/dev/null
 done
-for f in macdock.exe macdock.exe.sha256; do
+for f in winmac.exe winmac.exe.sha256; do
   curl -fsS -X POST "${auth[@]}" -F "attachment=@$work/$f" "$gitea/api/v1/repos/$gitea_repo/releases/$id/assets?name=$f" >/dev/null
 done
 echo "mirrored $tag to $gitea/$gitea_repo/releases/tag/$tag"

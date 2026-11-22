@@ -78,12 +78,12 @@ impl Gpu {
     pub fn new() -> windows::core::Result<Gpu> {
         unsafe {
             let hinst = GetModuleHandleW(None)?;
-            let wc = WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hinst.into(), lpszClassName: w!("MacDockGenieGpu"), ..Default::default() };
+            let wc = WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hinst.into(), lpszClassName: w!("WinMacGenieGpu"), ..Default::default() };
             RegisterClassW(&wc);
             // layered + transparent = click-through; with no redirection bitmap the layered part costs nothing
             let hwnd = CreateWindowExW(
                 WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-                w!("MacDockGenieGpu"), w!("MacDock Genie"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
+                w!("WinMacGenieGpu"), w!("WIN MAC Genie"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
             )?;
             let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
             match Self::build(hwnd) {

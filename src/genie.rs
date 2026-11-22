@@ -340,7 +340,7 @@ fn window_rect(h: HWND) -> Option<RECT> {
 }
 
 fn snap_dir() -> String {
-    format!("{}\\MacDock\\snaps", std::env::var("LOCALAPPDATA").unwrap_or_default())
+    format!("{}\\WinMac\\snaps", std::env::var("LOCALAPPDATA").unwrap_or_default())
 }
 
 fn snap_files(h: isize) -> Vec<std::path::PathBuf> {
@@ -484,11 +484,11 @@ unsafe extern "system" fn overlay_proc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) 
 fn create_overlay() -> HWND {
     unsafe {
         let hinst = GetModuleHandleW(None).unwrap();
-        let wc = WNDCLASSW { lpfnWndProc: Some(overlay_proc), hInstance: hinst.into(), lpszClassName: w!("MacDockGenie"), ..Default::default() };
+        let wc = WNDCLASSW { lpfnWndProc: Some(overlay_proc), hInstance: hinst.into(), lpszClassName: w!("WinMacGenie"), ..Default::default() };
         RegisterClassW(&wc);
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            w!("MacDockGenie"), w!("MacDock Genie"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
+            w!("WinMacGenie"), w!("WinMac Genie"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
         )
         .unwrap()
     }

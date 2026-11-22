@@ -1,11 +1,11 @@
 <div align="center">
 
-# MacDock
+# WIN MAC
 
 **A macOS-style dock and menu bar for Windows 11.**
 Written from scratch in Rust on plain Win32. No Windhawk, no Explorer patching.
 
-<img src="docs/film.webp" alt="MacDock running on Windows 11: the dock magnifies under the pointer, a window minimizes into its icon with the genie effect, then the battery and Control Center flyouts open from the menu bar" width="100%">
+<img src="docs/film.webp" alt="WIN MAC running on Windows 11: the dock magnifies under the pointer, a window minimizes into its icon with the genie effect, then the battery and Control Center flyouts open from the menu bar" width="100%">
 
 <sub>Every shot is a frame of one screen recording on a Windows 11 laptop. Full quality: <a href="docs/macdock.mp4">docs/macdock.mp4</a></sub>
 
@@ -27,11 +27,11 @@ Same laptop, same wallpaper, a minute apart.
 <table>
 <tr>
 <td width="50%"><img src="docs/before.jpg" alt="Stock Windows 11 desktop with the default taskbar"></td>
-<td width="50%"><img src="docs/after.jpg" alt="The same desktop with MacDock: menu bar on top, desktop widgets at the top right, Liquid Glass dock at the bottom"></td>
+<td width="50%"><img src="docs/after.jpg" alt="The same desktop with WIN MAC: menu bar on top, desktop widgets at the top right, Liquid Glass dock at the bottom"></td>
 </tr>
 <tr>
 <td align="center"><sub>Windows 11, stock taskbar</sub></td>
-<td align="center"><sub>MacDock: menu bar, desktop widgets, Liquid Glass dock</sub></td>
+<td align="center"><sub>WIN MAC: menu bar, desktop widgets, Liquid Glass dock</sub></td>
 </tr>
 </table>
 
@@ -73,9 +73,9 @@ Same laptop, same wallpaper, a minute apart.
 ### The genie
 <img src="docs/genie.png" alt="A Visual Studio Code window bending into its dock icon mid-minimize">
 
-The window you minimize is snapshotted and drawn as a 48-row mesh by MacDock's own scanline rasterizer
+The window you minimize is snapshotted and drawn as a 48-row mesh by WIN MAC's own scanline rasterizer
 (bilinear, anti-aliased edges, rows split across threads), then squeezed and poured into its icon. Restore from the dock plays it backwards. Windows' own minimize
-animation is switched off while MacDock runs and comes back when it quits.
+animation is switched off while WIN MAC runs and comes back when it quits.
 
 </td>
 </tr>
@@ -87,7 +87,7 @@ animation is switched off while MacDock runs and comes back when it quits.
 
 Charge, time left, wear and cycles, plus where the power goes: CPU package power from Windows' energy
 meter (RAPL, no admin), NVIDIA GPU power from NVML, and the rest. On battery the total is measured; on
-the adapter it is estimated from a "rest" value MacDock learns while you are unplugged.
+the adapter it is estimated from a "rest" value WIN MAC learns while you are unplugged.
 
 </td>
 <td width="50%" valign="top">
@@ -107,7 +107,7 @@ notification-area icons (Discord, Steam, …).
 
 - The app in front, in bold, with **File / Edit / View / Window / Help** menus that send the real
   shortcuts (Ctrl+S, Ctrl+Z, …) to that app
-- System menu with Automatically Hide Dock, Quit MacDock and **Check for MacDock Updates…**. MacDock asks
+- System menu with Automatically Hide Dock, Quit WIN MAC and **Check for WIN MAC Updates…**. WIN MAC asks
   GitHub for the latest release at start and every 6 hours (only `api.github.com`, nothing is downloaded by
   itself); when a newer one is out, a blue dot sits on the logo and the menu shows **Update Available**, which
   opens the release page
@@ -119,7 +119,7 @@ notification-area icons (Discord, Steam, …).
   tokens in the last 30 minutes (title, project, model, branch, its own tok/s). Read from the agents' local logs
   (`~/.claude/projects`, `~/.codex/sessions`); by default nothing is sent anywhere. Codex reports its own limits.
   Claude Code logs none: turn on `ClaudeUsageOAuth` to read its real 5-hour and weekly limits from Anthropic
-  with Claude Code's own login (every 2 minutes, only to api.anthropic.com; MacDock never refreshes the token),
+  with Claude Code's own login (every 2 minutes, only to api.anthropic.com; WIN MAC never refreshes the token),
   or set `ClaudeLimit5h` for an estimate from local tokens.
 
 ### Alt+Tab, the macOS way
@@ -154,7 +154,7 @@ notification-area icons (Discord, Steam, …).
 
 ## Install
 
-**Download:** grab `macdock.exe` from the [latest release](https://github.com/GodrezJr2/MacDock/releases/latest)
+**Download:** grab `winmac.exe` from the [latest release](https://github.com/GodrezJr2/WIN MAC/releases/latest)
 and run it. Windows 11 only, nothing else to install. Each release is built by GitHub Actions from its tag.
 
 **Build from source:** you need Windows 11 and Rust. Follow these steps in order:
@@ -166,29 +166,29 @@ and run it. Windows 11 only, nothing else to install. Each release is built by G
    ```
 3. Open a new terminal, then build and run:
    ```powershell
-   git clone https://github.com/GodrezJr2/MacDock.git
-   cd MacDock
+   git clone https://github.com/GodrezJr2/WIN MAC.git
+   cd WIN MAC
    cargo build --release
-   .\target\release\macdock.exe
+   .\target\release\winmac.exe
    ```
 
 The first build takes a few minutes because it compiles the dependencies.
 
 The result is one ~1 MB exe with no runtime to install; copy it wherever you like.
 
-MacDock hides the Windows taskbar while it runs and restores it when you quit.
+WIN MAC hides the Windows taskbar while it runs and restores it when you quit.
 
-- **Quit:** Windows logo in the menu bar → **Quit MacDock**
-- **If it was killed** and the taskbar is still hidden: `macdock.exe --restore`
-- **Start with Windows:** Windows logo in the menu bar → **Open MacDock at Login**
+- **Quit:** Windows logo in the menu bar → **Quit WIN MAC**
+- **If it was killed** and the taskbar is still hidden: `winmac.exe --restore`
+- **Start with Windows:** Windows logo in the menu bar → **Open WIN MAC at Login**
 
 ## Configure
 
-Settings live in `%APPDATA%\MacDock\config.json`, created on first run.
+Settings live in `%APPDATA%\WIN MAC\config.json`, created on first run.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `Pinned` | Explorer, Apps, Chrome, Outlook, Terminal, VS Code, Discord, Settings | Dock items: `shell:AppsFolder\<AppID>`, a `.lnk`, an `.exe`, or `macdock:apps` for the Apps item |
+| `Pinned` | Explorer, Apps, Chrome, Outlook, Terminal, VS Code, Discord, Settings | Dock items: `shell:AppsFolder\<AppID>`, a `.lnk`, an `.exe`, or `winmac:apps` for the Apps item |
 | `LaunchpadStyle` | `"apps"` | What the Apps icon opens: `"apps"` (the macOS 26 Apps window) or `"classic"` (full-screen Launchpad) |
 | `IconSize` | `52` | Icon size at rest, in pixels |
 | `Magnify` | `1.75` | Size of the icon under the pointer, relative to rest |
@@ -198,7 +198,7 @@ Settings live in `%APPDATA%\MacDock\config.json`, created on first run.
 | `Badges` | `true` | Red unread badges |
 | `MenuBar` | `true` | Show the menu bar |
 | `TrayIcons` | `true` | Host notification-area icons behind the `^` item |
-| `HideTaskbar` | `true` | Hide the Windows taskbar while MacDock runs |
+| `HideTaskbar` | `true` | Hide the Windows taskbar while WIN MAC runs |
 | `DesktopWidgets` | `true` | Clock, date, battery and system widgets on the desktop |
 | `DownloadsStack` | `true` | Downloads folder item next to the Trash |
 | `DownloadsFolder` | your Downloads | Folder the stack lists, if it is not the Windows Downloads folder |
@@ -209,7 +209,7 @@ Settings live in `%APPDATA%\MacDock\config.json`, created on first run.
 | `ClaudeUsageOAuth` | `false` | Read Claude's real 5-hour / weekly limits from `api.anthropic.com/api/oauth/usage` with the login in `~/.claude/.credentials.json` |
 | `ClaudeLimit5h` | `null` | Tokens per 5-hour Claude block that count as 100% (input + cache writes + output) |
 
-A crash writes `%APPDATA%\MacDock\panic.log` and still puts the taskbar back.
+A crash writes `%APPDATA%\WIN MAC\panic.log` and still puts the taskbar back.
 
 ## How it works
 
@@ -217,7 +217,7 @@ A crash writes `%APPDATA%\MacDock\panic.log` and still puts the taskbar back.
 <summary><b>Liquid Glass without a blur API</b></summary>
 
 Windows ignores window regions for layered windows, so accent blur behind a rounded plate showed up as a
-black or grey square. MacDock draws the glass itself: the windows under the plate are captured live with
+black or grey square. WIN MAC draws the glass itself: the windows under the plate are captured live with
 Windows Graphics Capture (one capture per window, wallpaper where there is none), and the plate shows them
 nearly sharp, bent inward near the rim like a lens, with a light edge on top. Captures repaint at most 30 times
 a second, so a video playing behind the dock costs about 0.1 s of CPU per second.
@@ -227,7 +227,7 @@ a second, so a video playing behind the dock costs about 0.1 s of CPU per second
 <summary><b>A genie with no flash</b></summary>
 
 For a title-bar minimize, a low-level mouse hook (on its own thread) sees the press on the minimize button
-and MacDock pre-draws the first frame from a fresh snapshot; on release the overlay is shown from the hook
+and WIN MAC pre-draws the first frame from a fresh snapshot; on release the overlay is shown from the hook
 itself, so the animation is already up when the window disappears. Only the mesh's bounding box is redrawn
 and pushed to the screen each frame. Snapshots are shrunk off the UI thread and saved to
 disk, so windows minimized before a restart still animate on restore.
@@ -245,7 +245,7 @@ database through the system's own `winsqlite3.dll`).
 <summary><b>Battery power on a laptop that does not report it</b></summary>
 
 The battery driver only knows the battery side. On battery its discharge rate is the whole system's draw;
-on the adapter nothing measures the input. MacDock reads CPU package energy through Windows' Energy Meter
+on the adapter nothing measures the input. WIN MAC reads CPU package energy through Windows' Energy Meter
 Interface and GPU power through NVML, and learns the rest (screen, RAM, SSD, fans) while unplugged. Sensors
 are read off the UI thread, and a sleeping NVIDIA GPU is left asleep instead of being woken every second.
 </details>
@@ -254,14 +254,14 @@ are read off the UI thread, and a sleeping NVIDIA GPU is left asleep instead of 
 
 - Built and tested on one machine: a Windows 11 laptop at 2560×1600, 125% scale, with an NVIDIA GPU.
   Other setups may show rough edges; issues are welcome.
-- Dock and menu bar live on the primary monitor; other monitors have no taskbar while MacDock runs.
+- Dock and menu bar live on the primary monitor; other monitors have no taskbar while WIN MAC runs.
 - While the `^` tray flyout is open, a WinUI 3 app started at that moment can fail to start, because the
   tray host registers its own `Shell_TrayWnd`. The host only runs while that flyout is open.
 - GPU power needs an NVIDIA GPU; without one the breakdown shows CPU and the rest.
 
 ## Rust vs the old C# build
 
-MacDock started as C# / WPF on .NET 10 and was rewritten in Rust (plain Win32, tiny-skia, WinRT through the
+WIN MAC started as C# / WPF on .NET 10 and was rewritten in Rust (plain Win32, tiny-skia, WinRT through the
 `windows` crate) to make it lighter. Same features, same `config.json`. Measured on the same laptop and screen,
 20 s idle plus a 10 s scripted pointer sweep over the dock:
 
@@ -277,8 +277,8 @@ The C# version is kept at the tag [`csharp-final`](https://github.com/GodrezJr2/
 
 ## Credits
 
-- Built by [@GodrezJr2](https://github.com/GodrezJr2) with Claude Code as an AI pair programmer.
-- macOS and the Dock are trademarks of Apple Inc. MacDock is an independent project, not affiliated with or endorsed by Apple.
+- WIN MAC is a rebranded fork of [MacDock](https://github.com/GodrezJr2/MacDock) by [@GodrezJr2](https://github.com/GodrezJr2) (Jayson Christopher Lim), built with Claude Code as an AI pair programmer.
+- macOS and the Dock are trademarks of Apple Inc. WIN MAC is an independent project, not affiliated with or endorsed by Apple.
 
 ## License
 

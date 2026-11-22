@@ -538,7 +538,7 @@ mod launch_fallback {
     #[test]
     #[ignore]
     fn unassociated_file_opens_in_notepad() {
-        let p = std::env::current_dir().unwrap().join("target").join("macdock_noassoc.zzqq");
+        let p = std::env::current_dir().unwrap().join("target").join("winmac_noassoc.zzqq");
         std::fs::write(&p, "{}").unwrap();
         assert!(!super::has_handler(p.to_str().unwrap()));
         assert!(super::has_handler(r"C:\Windows\win.ini"));

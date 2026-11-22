@@ -1,4 +1,4 @@
-//! %APPDATA%\MacDock\config.json, shared with the C# build (same keys, same defaults as Config.cs).
+//! %APPDATA%\WinMac\config.json, shared with the C# build (same keys, same defaults as Config.cs).
 
 use serde_json::{json, Map, Value};
 
@@ -81,7 +81,7 @@ impl Config {
 }
 
 pub fn dir() -> String {
-    format!("{}\\MacDock", std::env::var("APPDATA").unwrap_or_default())
+    format!("{}\\WinMac", std::env::var("APPDATA").unwrap_or_default())
 }
 
 pub fn path() -> String {
@@ -89,7 +89,7 @@ pub fn path() -> String {
 }
 
 /// The dock's Apps item (macOS 26's Launchpad icon): opens the Apps window, or the full-screen Launchpad.
-pub const APPS_ITEM: &str = "macdock:apps";
+pub const APPS_ITEM: &str = "winmac:apps";
 
 impl Default for Config {
     fn default() -> Self {

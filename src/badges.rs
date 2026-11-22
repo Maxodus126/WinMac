@@ -91,7 +91,7 @@ pub fn toasts() -> Vec<(String, i64)> {
 
 pub struct Seen {
     map: HashMap<String, i64>, // lower-case AUMID → FILETIME
-    baseline: i64,             // first run: toasts from before MacDock knew about them don't count
+    baseline: i64,             // first run: toasts from before WIN MAC knew about them don't count
 }
 
 fn seen_path() -> String {

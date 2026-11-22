@@ -202,14 +202,14 @@ pub fn key(vks: &[u8]) {
 fn confirm(owner: HWND, q: &str) -> bool {
     let t = shell::wide(q);
     unsafe {
-        MessageBoxW(owner, windows::core::PCWSTR(t.as_ptr()), w!("MacDock"), MB_OKCANCEL | MB_ICONQUESTION | MB_TOPMOST) == IDOK
+        MessageBoxW(owner, windows::core::PCWSTR(t.as_ptr()), w!("WinMac"), MB_OKCANCEL | MB_ICONQUESTION | MB_TOPMOST) == IDOK
     }
 }
 
 fn inform(owner: HWND, msg: &str) {
     let t = shell::wide(msg);
     unsafe {
-        MessageBoxW(owner, windows::core::PCWSTR(t.as_ptr()), w!("MacDock"), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+        MessageBoxW(owner, windows::core::PCWSTR(t.as_ptr()), w!("WinMac"), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
     }
 }
 
@@ -218,7 +218,7 @@ const RUN_KEY: windows::core::PCWSTR = w!("Software\\Microsoft\\Windows\\Current
 fn at_login() -> bool {
     unsafe {
         let mut len = 0u32;
-        RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, w!("MacDock"), RRF_RT_REG_SZ, None, None, Some(&mut len)).is_ok()
+        RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, w!("WinMac"), RRF_RT_REG_SZ, None, None, Some(&mut len)).is_ok()
     }
 }
 
@@ -229,11 +229,11 @@ fn toggle_login() {
             return;
         }
         if at_login() {
-            let _ = RegDeleteValueW(k, w!("MacDock"));
+            let _ = RegDeleteValueW(k, w!("WinMac"));
         } else if let Ok(exe) = std::env::current_exe() {
             let v = shell::wide(&format!("\"{}\"", exe.display()));
             let bytes = std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 2);
-            let _ = RegSetValueExW(k, w!("MacDock"), 0, REG_SZ, Some(bytes));
+            let _ = RegSetValueExW(k, w!("WinMac"), 0, REG_SZ, Some(bytes));
         }
         let _ = RegCloseKey(k);
     }
@@ -268,14 +268,14 @@ pub fn create_window() -> HWND {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
-            lpszClassName: w!("MacDockMenuBar"),
+            lpszClassName: w!("WinMacMenuBar"),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             ..Default::default()
         };
         RegisterClassW(&wc);
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            w!("MacDockMenuBar"), w!("MacDock Menu Bar"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
+            w!("WinMacMenuBar"), w!("WIN MAC Menu Bar"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
         )
         .unwrap()
     }
@@ -739,8 +739,8 @@ impl MenuBar {
         split(vec![
             (Entry::item("About This PC"), Do::Launch("ms-settings:about")),
             match crate::update::available() {
-                Some((v, _)) => (Entry::item(crate::i18n::fill("Update Available: MacDock {}…", &v.to_string())), Do::OpenUpdate),
-                None => (Entry::item("Check for MacDock Updates…"), Do::CheckUpdate),
+                Some((v, _)) => (Entry::item(crate::i18n::fill("Update Available: WIN MAC {}…", &v.to_string())), Do::OpenUpdate),
+                None => (Entry::item("Check for WIN MAC Updates…"), Do::CheckUpdate),
             },
             (Entry::Sep, Do::None),
             (Entry::item("System Settings…"), Do::Launch("ms-settings:")),
@@ -759,9 +759,9 @@ impl MenuBar {
             (Entry::item("Show Tray Icons").checked(self.tray), Do::Opt(BarOpt::TrayIcons)),
             (Entry::Sep, Do::None),
             (Entry::item("Automatically Hide Dock").checked(self.auto_hide_dock), Do::AutoHide),
-            (Entry::item("Open MacDock at Login").checked(at_login()), Do::Login),
-            (Entry::item("MacDock Settings…"), Do::Settings),
-            (Entry::item("Quit MacDock"), Do::Quit),
+            (Entry::item("Open WIN MAC at Login").checked(at_login()), Do::Login),
+            (Entry::item("WIN MAC Settings…"), Do::Settings),
+            (Entry::item("Quit WIN MAC"), Do::Quit),
         ])
     }
 
@@ -856,13 +856,13 @@ impl MenuBar {
                 let cur = crate::update::CURRENT;
                 match crate::update::check() {
                     Ok(Some((v, url))) => {
-                        if confirm(self.hwnd, &format!("MacDock {v} is available (you have {cur}).
+                        if confirm(self.hwnd, &format!("WIN MAC {v} is available (you have {cur}).
 
 Open the download page?")) {
                             shell::launch(&url);
                         }
                     }
-                    Ok(None) => inform(self.hwnd, &format!("MacDock {cur} is the latest version.")),
+                    Ok(None) => inform(self.hwnd, &format!("WIN MAC {cur} is the latest version.")),
                     Err(e) => inform(self.hwnd, &format!("Could not check for updates: {e}.")),
                 }
                 self.update = crate::update::available().is_some();

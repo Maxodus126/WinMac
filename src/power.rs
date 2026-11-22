@@ -335,7 +335,7 @@ pub struct PowerMeter {
 unsafe impl Send for PowerMeter {}
 
 fn store_path() -> String {
-    format!("{}\\MacDock\\power.json", std::env::var("LOCALAPPDATA").unwrap_or_default())
+    format!("{}\\WinMac\\power.json", std::env::var("LOCALAPPDATA").unwrap_or_default())
 }
 
 fn smooth(avg: Option<f64>, now: Option<f64>) -> Option<f64> {

@@ -127,7 +127,7 @@ pub enum Cmd {
     /// window panels only (traffic lights): minimize, and fill the screen / back
     Minimize,
     Zoom,
-    /// close and open MacDock's Settings
+    /// close and open WIN MAC's Settings
     Settings,
 }
 
@@ -567,18 +567,18 @@ fn create_window(window: bool) -> HWND {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
-            lpszClassName: w!("MacDockFlyout"),
+            lpszClassName: w!("WinMacFlyout"),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             ..Default::default()
         };
         RegisterClassW(&wc);
         // a window panel (Settings) is a normal app window: in Alt+Tab, minimizable, not always on top
         let (ex, title) = if window {
-            (WS_EX_LAYERED | WS_EX_APPWINDOW, w!("MacDock Settings"))
+            (WS_EX_LAYERED | WS_EX_APPWINDOW, w!("WIN MAC Settings"))
         } else {
-            (WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, w!("MacDock Flyout"))
+            (WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, w!("WIN MAC Flyout"))
         };
-        CreateWindowExW(ex, w!("MacDockFlyout"), title, WS_POPUP | WS_MINIMIZEBOX, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None)
+        CreateWindowExW(ex, w!("WinMacFlyout"), title, WS_POPUP | WS_MINIMIZEBOX, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None)
         .unwrap()
     }
 }

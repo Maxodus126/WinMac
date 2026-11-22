@@ -510,14 +510,14 @@ pub fn start() {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
-            lpszClassName: w!("MacDockSwitcher"),
+            lpszClassName: w!("WinMacSwitcher"),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             ..Default::default()
         };
         RegisterClassW(&wc);
         let Ok(hwnd) = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-            w!("MacDockSwitcher"), w!("MacDock Switcher"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
+            w!("WinMacSwitcher"), w!("WIN MAC Switcher"), WS_POPUP, 0, 0, 1, 1, HWND::default(), HMENU::default(), hinst, None,
         ) else {
             return;
         };

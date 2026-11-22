@@ -3,7 +3,7 @@
 //! Claude Code keeps its OAuth login in `%USERPROFILE%\.claude\.credentials.json`; the same token can read
 //! `GET https://api.anthropic.com/api/oauth/usage` (what Claude Code's own /usage shows). The endpoint is not
 //! documented, so any field may go away; everything here fails soft. The token is only ever sent to
-//! api.anthropic.com. MacDock never refreshes it (that would rotate the refresh token under Claude Code):
+//! api.anthropic.com. WIN MAC never refreshes it (that would rotate the refresh token under Claude Code):
 //! when it has expired we wait until Claude Code runs and renews it.
 
 use std::ffi::c_void;
@@ -80,7 +80,7 @@ pub(crate) fn get(host: &str, path: &str, headers: &str) -> Result<(u32, String)
     let (host_w, path_w) = (wide(host), wide(path));
     let hdr: Vec<u16> = headers.encode_utf16().collect();
     unsafe {
-        let s = H(WinHttpOpen(w!("MacDock"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0));
+        let s = H(WinHttpOpen(w!("WinMac"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0));
         if s.0.is_null() {
             return Err("network unavailable".into());
         }
