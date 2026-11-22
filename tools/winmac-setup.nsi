@@ -12,9 +12,11 @@
   !define VERSION "1.0.3"
 !endif
 
-; Repo root = the folder above the tools/ dir holding this script. NSIS resolves relative
-; paths against the script's own directory, so use absolute paths from here.
-!define ROOT "${__FILEDIR__}\.."
+; Repo root. The build workflow passes -DROOT=<workspace> (absolute); without it, fall
+; back to the folder above the tools/ dir holding this script.
+!ifndef ROOT
+  !define ROOT "${__FILEDIR__}\.."
+!endif
 
 !define APPNAME   "WIN MAC"
 !define COMPANY    "maxodus"

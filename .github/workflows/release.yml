@@ -51,7 +51,7 @@ jobs:
           $tag = "${{ github.ref_name }}".TrimStart('v')
           $nsis = Get-ChildItem "C:\Program Files*\NSIS\makensis.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $nsis) { throw "NSIS not found" }
-          & $nsis.FullName -DVERSION=$tag "tools\winmac-setup.nsi"
+          & $nsis.FullName "-DROOT=$env:GITHUB_WORKSPACE" -DVERSION=$tag "tools\winmac-setup.nsi"
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
 
       - name: Publish release
