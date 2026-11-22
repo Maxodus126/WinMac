@@ -18,7 +18,7 @@ Written from scratch in Rust on plain Win32 — no Windhawk, no Explorer patchin
 
 <br>
 
-**[Download for Windows 11](https://github.com/Maxodus126/WinMac/releases/latest) · [View Website](https://maxodus126.github.io/WinMac/) · [Built from source](#build-from-source)**
+**[Download for Windows 11](https://github.com/Maxodus126/WinMac/releases/latest) · [Install guide](INSTALL.md) · [View Website](https://maxodus126.github.io/WinMac/) · [Built from source](#build-from-source)**
 
 </div>
 
