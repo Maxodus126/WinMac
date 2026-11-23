@@ -117,6 +117,12 @@ Page custom OptCreate OptLeave
 ;  Install section
 ; ============================================================
 Section "Install"
+  ; If a previous copy is running, its exe is locked and the File overwrite below would
+  ; fail. Close it first (best-effort; harmless when nothing is running).
+  DetailPrint "Closing any running WIN MAC..."
+  nsExec::ExecToLog 'taskkill /F /T /IM winmac.exe'
+  Sleep 500
+
   SetOutPath "$INSTDIR"
   File /oname=winmac.exe "${ROOT}\target\release\winmac.exe"
   File /oname=winmac.exe.sha256 "${ROOT}\target\release\winmac.exe.sha256"
@@ -156,9 +162,18 @@ SectionEnd
 ;  Uninstall section
 ; ============================================================
 Section "Uninstall"
-  ; restore the Windows taskbar first (best-effort), then remove files
-  IfFileExists "$INSTDIR\${EXE}" 0 +2
+  ; Close WIN MAC FIRST: a running instance would (a) lock its exe so the Delete below
+  ; fails, and (b) keep re-hiding the taskbar. Only after it is gone do we restore the
+  ; taskbar, so nothing re-hides it.
+  DetailPrint "Closing WIN MAC..."
+  nsExec::ExecToLog 'taskkill /F /T /IM winmac.exe'
+  Sleep 500
+
+  IfFileExists "$INSTDIR\${EXE}" 0 skip_restore
+    DetailPrint "Restoring the Windows taskbar..."
     nsExec::ExecToLog '"$INSTDIR\${EXE}" --restore'
+    Sleep 300
+  skip_restore:
 
   Delete "$DESKTOP\WIN MAC.lnk"
   RMDir /r "$SMPROGRAMS\WIN MAC"
