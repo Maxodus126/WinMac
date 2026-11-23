@@ -61,7 +61,7 @@ The window is snapshotted and drawn as a 48-row mesh by WIN MAC's own scanline r
 - System menu: Auto Hide Dock, Quit, Check for Updates (only `api.github.com`; nothing auto-downloads; a blue dot marks new releases)
 - **Control Center:** Wi-Fi/Bluetooth, Dark Mode, Windows power mode, brightness, volume, now-playing, and a `^` tray host
 - **Battery flyout** with real numbers: charge, wear, cycles, CPU package power (RAPL), NVIDIA GPU power (NVML) and rest
-- **AI usage** for Claude Code & Codex: ring of the nearest limit, tok/s burn rate, 5/30-min and 24h charts, per-session details — read from local logs, no telemetry by default
+- **AI usage** for Claude Code & Codex: ring of the nearest limit, tok/s burn rate, 5/30-min and 24h charts, per-session details — read from local logs, no telemetry by default. Update checks hit the GitHub API and can be disabled in Settings (see [Privacy](INSTALL.md#kebijakan-privasi-ringkas)).
 
 *Screenshot coming soon — will be added.*
 

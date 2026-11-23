@@ -12,10 +12,10 @@ Keduanya sama-sama aplikasi native Rust, tanpa dependensi runtime eksternal.
 1. Unduh **`winmac-setup.exe`** dari halaman rilis.
 2. Jalankan installer → klik **Next**.
 3. Pada halaman **License Agreement**, **centang** *"I have read and accept the license agreement"* (wajib) agar tombol lanjut aktif.
-4. Pilih opsi: *Start Menu shortcut*, *desktop shortcut*, dan *jalankan setelah pemasangan* → klik **Install**.
+4. Pilih opsi: *Start Menu shortcut*, *desktop shortcut*, *jalankan setelah pemasangan*, dan *Start WIN MAC automatically when you log in* (opsional) → klik **Install**.
 5. Selesai. WIN MAC terpasang di `%LOCALAPPDATA%\Programs\WIN MAC` dan terdaftar di **Add/Remove Programs**.
 
-**Uninstall (via installer):** buka **Settings → Apps → Installed apps** (atau Control Panel → Programs) → cari **WIN MAC** → **Uninstall**. Uninstaller otomatis memulihkan taskbar Windows lalu menghapus file.
+**Uninstall (via installer):** buka **Settings → Apps → Installed apps** (atau Control Panel → Programs) → cari **WIN MAC** → **Uninstall**. Uninstaller otomatis menutup WIN MAC, memulihkan taskbar, menghapus file program, **dan menghapus data pengaturan** (`%APPDATA%\WinMac`).
 
 ## 1. Persyaratan
 
@@ -99,3 +99,15 @@ Jalankan di **Windows 11 bersih** (mesin uji), lalu centang:
 - [ ] **Settings**: geser slider ikon/magnifikasi; pratinjau ikut berubah; klik *Restart* berfungsi.
 - [ ] **Quit/restart**: keluar normal; jalankan ulang; tidak ada `panic.log` baru di `%APPDATA%\WinMac\`.
 - [ ] **Taskbar pulih** setelah keluar normal.
+
+---
+
+## Kebijakan Privasi (ringkas)
+
+WIN MAC **tidak mengirim telemetry** dan tidak mengunggah data pribadi apa pun. Data yang disentuh:
+
+- **Cek update** — menghubungi **API GitHub** (hanya menanyakan versi terbaru; tidak mengirim data pribadi). Dapat **dimatikan** lewat toggle *"Check for updates"* di Settings (kunci `CheckUpdates`, default aktif).
+- **AI usage (Claude Code / Codex)** — hanya **membaca log lokal** di mesin Anda (`%USERPROFILE%\.claude` dan `%USERPROFILE%\.codex`). Tidak ada yang dikirim ke jaringan. Sebuah **optional** fitur *"Claude limits from your Claude login"* (default **mati**) menghubungi `api.anthropic.com` untuk menampilkan batas pemakaian — dan hanya jika Anda mengaktifkannya.
+- **Semua pengaturan** tersimpan lokal di `%APPDATA%\WinMac\config.json`. Tidak ada akun, tidak ada cookie, tidak ada data browsing.
+
+Jaringan hanya digunakan bila: cek update aktif, atau fitur login Claude diaktifkan. Yang lain berjalan sepenuhnya lokal.

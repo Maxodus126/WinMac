@@ -79,6 +79,7 @@ Page custom ConsentCreate ConsentLeave
 Var OptShortcut
 Var OptDesktop
 Var OptLaunch
+Var OptLogin
 Function OptCreate
   !insertmacro MUI_HEADER_TEXT "Installation options" "Choose what you want"
   nsDialogs::Create 1018
@@ -95,6 +96,9 @@ Function OptCreate
   ${NSD_CreateCheckbox} 0 36u 100% 12u "Launch WIN MAC after installation"
   Pop $OptLaunch
   ${NSD_SetState} $OptLaunch 1
+  ${NSD_CreateCheckbox} 0 54u 100% 12u "Start WIN MAC automatically when you log in"
+  Pop $OptLogin
+  ${NSD_SetState} $OptLogin 0
   nsDialogs::Show
 FunctionEnd
 
@@ -151,6 +155,12 @@ Section "Install"
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" 2048
 
+  ; run at login, if chosen (HKCU Run key, so no admin needed)
+  ${NSD_GetState} $OptLogin $0
+  ${If} $0 == 1
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WinMac" '"$INSTDIR\${EXE}"'
+  ${EndIf}
+
   ; launch after install, if chosen
   ${NSD_GetState} $OptLaunch $0
   ${If} $0 == 1
@@ -178,10 +188,17 @@ Section "Uninstall"
   Delete "$DESKTOP\WIN MAC.lnk"
   RMDir /r "$SMPROGRAMS\WIN MAC"
 
+  ; remove the run-at-login entry (harmless if it was never set)
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WinMac"
+
   Delete "$INSTDIR\${EXE}"
   Delete "$INSTDIR\${EXE}.sha256"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
 
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
+
+  ; full data removal (settings, cache, logs)
+  DetailPrint "Removing WIN MAC application data..."
+  RMDir /r "$APPDATA\WinMac"
 SectionEnd
