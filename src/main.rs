@@ -129,6 +129,8 @@ struct App {
     /// the Settings window, which lives beside the drop-down flyouts
     win: Option<flyout::Flyout>,
     fullscreen: bool,
+    /// Explorer pid, so we can re-claim our reserved screen space after Explorer restarts.
+    explorer_pid: Option<u32>,
     /// menu bar, widgets, Alt+Tab, Claude login as this process started them (changing them needs a restart)
     started: [bool; 4],
 }
@@ -180,7 +182,7 @@ impl App {
                 let icon = self.icon_for(front);
                 match self.genie.as_mut() {
                     Some(g) => g.restore(front, minimized, icon),
-                    None => genie::restore_all(front, &minimized),
+                    None => genie::restore_async(front, minimized),
                 }
             }
         }
@@ -335,6 +337,8 @@ impl App {
                         } else {
                             taskbar::restore(false);
                         }
+                        // the taskbar's reservation changed: re-anchor the dock to where it now sits
+                        self.dock.reserve();
                     }
                     Key::BatteryPct | Key::AiUsage | Key::TrayIcons => {
                         let (o, on) = match k {
@@ -371,6 +375,21 @@ impl App {
         match e {
             Ev::Dock(de) => {
                 if let DockEv::Refresh = de {
+                    // Explorer restarted (it holds our AppBar reservation): re-claim the reserved screen
+                    // space, or maximized windows slide behind the dock/menu bar again.
+                    if let Some(pid) = taskbar::explorer_pid() {
+                        if self.explorer_pid != Some(pid) {
+                            self.explorer_pid = Some(pid);
+                            if let Some(b) = self.bar.as_mut() {
+                                b.shell_restarted();
+                            }
+                            self.dock.shell_restarted();
+                        }
+                        if let Some(b) = self.bar.as_mut() {
+                            b.ensure_reservation();
+                        }
+                        self.dock.ensure_reservation();
+                    }
                     // Explorer's ABN_FULLSCREENAPP is unreliable with its taskbar hidden: ask on every refresh
                     let fs = foreground_is_fullscreen();
                     if fs != self.fullscreen {
@@ -645,7 +664,7 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     let want_switcher = cfg.app_switcher;
     let check_updates = cfg.check_updates;
     let started = [cfg.menu_bar, want_widgets, want_switcher, cfg.claude_usage_oauth];
-    let mut app = App { dock: Dock::new(hwnd, cfg), genie, bar, fly: None, win: None, fullscreen: false, started };
+    let mut app = App { dock: Dock::new(hwnd, cfg), genie, bar, fly: None, win: None, fullscreen: false, explorer_pid: None, started };
     app.apply_genie_timing();
     if app.dock.config().launchpad_style == "classic" {
         flyout::warm_backdrop(); // only the full-screen Launchpad draws over it (~8 MB at 1080p)

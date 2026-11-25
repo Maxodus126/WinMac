@@ -9,7 +9,7 @@
 !include "nsDialogs.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.0.3"
+  !define VERSION "1.1.0"
 !endif
 
 ; Repo root. The build workflow passes -DROOT=<workspace> (absolute); without it, fall
@@ -132,15 +132,30 @@ Section "Install"
   File /oname=winmac.exe.sha256 "${ROOT}\target\release\winmac.exe.sha256"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  ; optional shortcuts
-  ${NSD_GetState} $OptShortcut $0
-  ${If} $0 == 1
+  ; optional shortcuts — use explicit paths (the NSIS $DESKTOP/$SMPROGRAMS built-ins
+  ; sometimes resolve to a OneDrive-redirected folder that silently fails).
+  ; In silent mode (/S) the options page never runs, so no checkbox state exists: create the
+  ; Start Menu shortcut (its default) and leave the rest (desktop, launch, login) off.
+  ${If} ${Silent}
     CreateDirectory "$SMPROGRAMS\WIN MAC"
     CreateShortCut "$SMPROGRAMS\WIN MAC\WIN MAC.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
-  ${EndIf}
-  ${NSD_GetState} $OptDesktop $0
-  ${If} $0 == 1
-    CreateShortCut "$DESKTOP\WIN MAC.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
+  ${Else}
+    ${NSD_GetState} $OptShortcut $0
+    ${If} $0 == 1
+      CreateDirectory "$SMPROGRAMS\WIN MAC"
+      CreateShortCut "$SMPROGRAMS\WIN MAC\WIN MAC.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
+    ${EndIf}
+    ${NSD_GetState} $OptDesktop $0
+    ${If} $0 == 1
+      ; resolve the real desktop folder (handles OneDrive redirection)
+      StrCpy $0 "$DESKTOP"
+      ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" "Desktop"
+      ${If} $1 != ""
+        StrCpy $0 $1
+      ${EndIf}
+      CreateDirectory "$0"
+      CreateShortCut "$0\WIN MAC.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
+    ${EndIf}
   ${EndIf}
 
   ; Add/Remove Programs entry (per-user)

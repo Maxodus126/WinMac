@@ -333,6 +333,9 @@ pub struct Dock {
     fit_b: f64,
     win_w: f64,
     win_h: f64,
+    /// bottom edge the dock is anchored to: the AppBar strip returned by ABM_QUERYPOS
+    /// (above the Windows taskbar when it is visible), or the screen bottom otherwise.
+    win_bottom: f64,
     items: Vec<Item>,
     icons: HashMap<String, (String, Option<Rc<Pixmap>>)>, // name + icon per item key, kept across app restarts
     surface: Option<Surface>,
@@ -400,7 +403,7 @@ impl Dock {
         (self.screen_w - self.win_w) / 2.0
     }
     fn win_y(&self) -> f64 {
-        self.screen_h - self.win_h
+        self.win_bottom - self.win_h
     }
     fn icon_px(&self) -> u32 {
         // icon_size is clamped to >=16 on load, but stay defensive: a 0 px pixmap
@@ -414,7 +417,7 @@ impl Dock {
         let now = Instant::now();
         Dock {
             hwnd, cfg, shell: Shell::default(), dpi, screen_w, screen_h, fit_b: f64::MAX,
-            win_w: 1.0, win_h: 1.0, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
+            win_w: 1.0, win_h: 1.0, win_bottom: screen_h, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
             label: None, label_alpha: 0.0, menu_up: false, drag_files: false, label_at: (0.0, 0.0, 0.0, 0.0), hovered: None, plate_left: 0.0,
             plate_w: 0.0, seps: Vec::new(), running_now: HashMap::new(), clock: now, last_t: 0.0, awake: false, hidden: false,
             sig: String::new(), refreshes: 0, appbar: false,
@@ -484,22 +487,39 @@ impl Dock {
     }
 
     /// Reserve the strip at the bottom so maximized windows stop above the dock.
-    fn reserve(&mut self) {
+    pub fn reserve(&mut self) {
         let t = ((self.plate_h() + BOTTOM_GAP * 2.0) * self.dpi).round() as i32;
         let (sw, sh) = ((self.screen_w * self.dpi).round() as i32, (self.screen_h * self.dpi).round() as i32);
         let mut d = self.appbar_data();
         unsafe {
             if !self.appbar {
-                SHAppBarMessage(ABM_NEW, &mut d);
+                if SHAppBarMessage(ABM_NEW, &mut d) == 0 {
+                    return; // refused (e.g. we run at low integrity); maximized windows will slide under us
+                }
                 self.appbar = true;
             }
-            d.rc.left = 0;
             d.rc.right = sw;
             d.rc.top = sh - t;
             d.rc.bottom = sh;
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
-            d.rc.top = d.rc.bottom - t;
             SHAppBarMessage(ABM_SETPOS, &mut d);
+            // anchor the window bottom to where QUERYPOS placed us (screen px -> DIPs)
+            self.win_bottom = d.rc.bottom as f64 / self.dpi;
+        }
+    }
+
+    /// Explorer restarted: our AppBar registration died with it, so re-register and re-claim the strip.
+    pub fn shell_restarted(&mut self) {
+        self.appbar = false;
+        if !self.cfg.auto_hide {
+            self.reserve();
+        }
+    }
+
+    /// Re-claim the reserved strip if the AppBar registration was lost (Explorer restart).
+    pub fn ensure_reservation(&mut self) {
+        if !self.appbar && !self.cfg.auto_hide {
+            self.reserve();
         }
     }
 

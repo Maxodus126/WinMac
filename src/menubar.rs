@@ -391,6 +391,21 @@ impl MenuBar {
         }
     }
 
+    /// Explorer restarted: our AppBar registration died with it, so re-register and re-claim the strip.
+    pub fn shell_restarted(&mut self) {
+        self.appbar = false;
+        if !self.hidden {
+            self.reserve();
+        }
+    }
+
+    /// Re-claim the reserved strip if the AppBar registration was lost (Explorer restart).
+    pub fn ensure_reservation(&mut self) {
+        if !self.appbar && !self.hidden {
+            self.reserve();
+        }
+    }
+
     fn unreserve(&mut self) {
         if self.appbar {
             let mut d = self.appbar_data();

@@ -77,6 +77,13 @@ fn main_bar() -> Option<HWND> {
     }
 }
 
+/// The pid of the Explorer that owns the main taskbar (changes when Explorer restarts).
+pub fn explorer_pid() -> Option<u32> {
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(main_bar()?, Some(&mut pid)) };
+    (pid != 0).then_some(pid)
+}
+
 fn bars() -> Vec<HWND> {
     let mut v: Vec<HWND> = main_bar().into_iter().collect();
     let mut h = HWND::default();
