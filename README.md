@@ -131,7 +131,7 @@ Settings live in `%APPDATA%\WinMac\config.json`, created on first run. The Setti
 | `Genie` / `GenieDuration` | `true` / `560` | Genie animation and length (ms) |
 | `IconTiles` / `Badges` | `true` / `true` | Squircle tiles / unread badges |
 | `MenuBar` / `TrayIcons` | `true` / `true` | Menu bar / `^` tray host |
-| `HideTaskbar` | `false` | Hide the Windows taskbar while WIN MAC runs |
+| `HideTaskbar` | `true` | Hide the Windows taskbar while WIN MAC runs |
 | `DesktopWidgets` / `DownloadsStack` / `ShowRecents` | `true` | Widgets, Downloads stack, last-3 recents |
 | `AppSwitcher` | `false` | macOS-style Alt+Tab (off = Windows switcher) |
 | `IconOverrides` | `{}` | Per-item custom icons (right-click → Change Icon…) |
