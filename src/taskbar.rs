@@ -95,9 +95,18 @@ pub fn restore(force: bool) {
     HIDDEN.set(false);
 }
 
+/// Explorer shows the taskbar again on its own (leaving a fullscreen app, display changes): re-apply
+/// the autohide state instead of forcing ShowWindow(SW_HIDE) — the latter corrupts the work area to
+/// 0x0,0x0 and makes maximized windows cover the dock.
 unsafe extern "system" fn on_show(_: HWINEVENTHOOK, _: u32, h: HWND, obj: i32, _: i32, _: u32, _: u32) {
     if obj == 0 && !h.0.is_null() && HIDDEN.get() && is_bar(h) {
-        let _ = ShowWindowAsync(h, SW_HIDE);
+        let Some(main) = main_bar() else { return };
+        let mut d = data(main, 0);
+        let state = SHAppBarMessage(ABM_GETSTATE, &mut d) as isize;
+        if state & ABS_AUTOHIDE == 0 {
+            let mut d = data(main, state | ABS_AUTOHIDE);
+            SHAppBarMessage(ABM_SETSTATE, &mut d);
+        }
     }
 }
 

@@ -670,6 +670,9 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
         b.start(); // reserve the top strip before the dock measures the work area
     }
     app.dock.start();
+    if app.dock.config().hide_taskbar {
+        taskbar::hide(); // autohide Explorer's bar; our opaque dock band covers the remaining strip
+    }
     if want_widgets {
         widgets::start(); // after the bar and dock reserved their strips, so the work area is final
     }

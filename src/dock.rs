@@ -28,10 +28,10 @@ use crate::shell::{self, eq_ic, AppWindow, Shell};
 use crate::{push, taskbar, tile, Ev};
 
 // macOS: the glass above and below a tile is ~35% of the tile (tiles fill ~88% of their box)
-const PAD: f64 = 13.0;
-const BOTTOM_GAP: f64 = 6.0;
-const RADIUS: f64 = 24.0;
-const PAD_X: f64 = 8.0;
+const PAD: f64 = 9.0;
+const BOTTOM_GAP: f64 = 4.0;
+const RADIUS: f64 = 20.0;
+const PAD_X: f64 = 6.0;
 const CB_APPBAR: u32 = WM_APP + 1;
 const TIMER_REFRESH: usize = 1;
 const TIMER_DISPLAY: usize = 2;
@@ -984,7 +984,9 @@ impl Dock {
         } else {
             self.screen_w.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
         };
-        self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 64.0;
+        // The plate is the visible dock; the extra height above it is only the room magnified
+        // icons grow into (they rise above the plate and must not be clipped by the layered window).
+        self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 8.0;
     }
 
     // -------------------------------------------------------------- badges
