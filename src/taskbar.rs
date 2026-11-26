@@ -79,6 +79,11 @@ pub fn keep_hidden() {
 }
 
 /// `force` puts the taskbar back even if this process never hid it.
+///
+/// Note: in a fresh process (e.g. `winmac.exe --restore` after a crash, or the panic hook)
+/// HIDDEN is false and ORIGINAL is 0, so replaying ORIGINAL would do nothing. When `force` is
+/// set we therefore read the live state and clear only the autohide bit, leaving the user's
+/// other AppBar bits untouched.
 pub fn restore(force: bool) {
     let hidden = HIDDEN.get();
     if !hidden && !force {
@@ -87,10 +92,11 @@ pub fn restore(force: bool) {
     unwatch();
     let Some(main) = main_bar() else { return };
     unsafe {
-        if hidden {
-            let mut d = data(main, ORIGINAL.get());
-            SHAppBarMessage(ABM_SETSTATE, &mut d);
-        }
+        let mut d = data(main, 0);
+        let live = SHAppBarMessage(ABM_GETSTATE, &mut d) as isize;
+        let target = if hidden { ORIGINAL.get() } else { live & !ABS_AUTOHIDE };
+        let mut d = data(main, target);
+        SHAppBarMessage(ABM_SETSTATE, &mut d);
     }
     HIDDEN.set(false);
 }
