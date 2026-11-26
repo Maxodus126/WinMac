@@ -650,9 +650,6 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     }
     let cfg = Config::load();
     i18n::set(&cfg.language);
-    if cfg.hide_taskbar {
-        taskbar::hide();
-    }
     let hwnd = dock::create_window();
     dropfiles::register(hwnd);
     let genie = cfg.genie.then(genie::Genie::new);

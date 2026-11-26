@@ -488,7 +488,8 @@ impl Dock {
 
     /// Reserve the strip at the bottom so maximized windows stop above the dock.
     pub fn reserve(&mut self) {
-        let t = ((self.plate_h() + BOTTOM_GAP * 2.0) * self.dpi).round() as i32;
+        // the strip the dock visually occupies: the plate plus the small gap under it
+        let t = ((self.plate_h() + BOTTOM_GAP) * self.dpi).round() as i32;
         let (sw, sh) = ((self.screen_w * self.dpi).round() as i32, (self.screen_h * self.dpi).round() as i32);
         let mut d = self.appbar_data();
         unsafe {
@@ -501,10 +502,13 @@ impl Dock {
             d.rc.right = sw;
             d.rc.top = sh - t;
             d.rc.bottom = sh;
+            // Ask Explorer where we actually sit (above any existing AppBar, e.g. the taskbar),
+            // then register that strip.
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
-            SHAppBarMessage(ABM_SETPOS, &mut d);
-            // anchor the window bottom to where QUERYPOS placed us (screen px -> DIPs)
+            // capture the effective bottom BEFORE SETPOS, so the window is anchored to the
+            // reserved strip, not the full screen bottom.
             self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            SHAppBarMessage(ABM_SETPOS, &mut d);
         }
     }
 
@@ -970,7 +974,7 @@ impl Dock {
         self.win_w = self
             .screen_w
             .min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0);
-        self.win_h = BOTTOM_GAP + self.plate_h() + b * (self.cfg.magnify - 1.0) + 64.0;
+        self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 64.0;
     }
 
     // -------------------------------------------------------------- badges

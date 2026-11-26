@@ -109,14 +109,13 @@ pub fn hide() {
         if !HIDDEN.get() {
             ORIGINAL.set(state);
         }
-        // autohide so the taskbar stops reserving space, then hide it outright. Only send the state when it
-        // differs: every ABM_SETSTATE makes Explorer re-show the bar a moment later.
+        // Autohide so the taskbar stops reserving space and hides itself. Let Explorer do the actual
+        // hiding — calling ShowWindow(SW_HIDE) on it breaks the work area (it collapses to 0x0), so
+        // maximized apps get cut off. Only send the state when it differs: every ABM_SETSTATE makes
+        // Explorer re-show the bar a moment later.
         if state & ABS_AUTOHIDE == 0 {
             let mut d = data(main, state | ABS_AUTOHIDE);
             SHAppBarMessage(ABM_SETSTATE, &mut d);
-        }
-        for b in bars() {
-            let _ = ShowWindow(b, SW_HIDE);
         }
     }
     HIDDEN.set(true);
