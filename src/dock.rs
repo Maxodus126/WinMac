@@ -522,14 +522,19 @@ impl Dock {
     /// Explorer restarted: our AppBar registration died with it, so re-register and re-claim the strip.
     pub fn shell_restarted(&mut self) {
         self.appbar = false;
-        if !self.cfg.auto_hide {
+        // not while hidden for fullscreen: a re-registration here would void the release in
+        // set_fullscreen_hidden and shrink the work area under a fullscreen app again
+        if !self.cfg.auto_hide && !self.hidden {
             self.reserve();
         }
     }
 
     /// Re-claim the reserved strip if the AppBar registration was lost (Explorer restart).
     pub fn ensure_reservation(&mut self) {
-        if !self.appbar && !self.cfg.auto_hide {
+        // not while hidden for fullscreen: main.rs calls us on every Refresh, which keeps firing (every
+        // 3 s) while the dock is hidden, so without this guard the strip would be re-registered under a
+        // fullscreen app and the work area would never release
+        if !self.appbar && !self.cfg.auto_hide && !self.hidden {
             self.reserve();
         }
     }
@@ -646,8 +651,8 @@ impl Dock {
         (self.screen_w, self.screen_h, self.dpi) = primary_screen();
         self.fit_b = f64::MAX;
         self.fit_icons();
-        if !self.cfg.auto_hide {
-            self.reserve();
+        if !self.cfg.auto_hide && !self.hidden {
+            self.reserve(); // not while hidden for fullscreen: we'd void the release on entering it
         }
         self.fit_window();
         self.load_frost();
@@ -704,9 +709,16 @@ impl Dock {
             SetTimer(self.hwnd, TIMER_REFRESH, if on { 3000 } else { 700 }, None);
         }
         if on {
+            // Release the AppBar reservation so a fullscreen / borderless-fullscreen app can cover the
+            // whole monitor. If we only hid the window and kept the reservation, the work area stays
+            // shrunk: maximized or borderless windows size to it and look cut off at the bottom.
+            self.unreserve();
             self.awake = false;
             self.surface = None; // its pixels are big; it comes back on the next frame
         } else {
+            if !self.cfg.auto_hide {
+                self.reserve(); // re-claim the reserved strip
+            }
             self.wake();
         }
     }
@@ -2137,7 +2149,9 @@ impl Dock {
                 self.apply_display();
             }
             DockEv::AppBar(ABN_POSCHANGED, _) => {
-                if !self.cfg.auto_hide {
+                // not while hidden for fullscreen: our own ABM_REMOVE in set_fullscreen_hidden fires
+                // ABN_POSCHANGED, which would otherwise re-register the strip we just released
+                if !self.cfg.auto_hide && !self.hidden {
                     self.reserve();
                 }
             }
