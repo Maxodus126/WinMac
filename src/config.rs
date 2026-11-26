@@ -307,6 +307,20 @@ impl Config {
         if let Value::Object(f) = fields {
             m.extend(f);
         }
+        // The widget window writes its layout straight to disk via save_widget_layout and never
+        // updates this in-memory Config, so a later save() here must not stomp it back with stale
+        // in-memory defaults (e.g. toggling any Settings switch would jump the widgets to top-right).
+        // Preserve whatever disk has for these keys.
+        if let Some(Value::Object(disk_map)) = std::fs::read_to_string(path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(s.trim_start_matches('\u{feff}')).ok())
+        {
+            for key in ["WidgetItems", "WidgetPosition", "WidgetOffset"] {
+                if let Some(v) = disk_map.get(key) {
+                    m.insert(key.to_string(), v.clone());
+                }
+            }
+        }
         let _ = std::fs::create_dir_all(dir());
         if let Ok(s) = serde_json::to_string_pretty(&Value::Object(m)) {
             write_atomic(&s);

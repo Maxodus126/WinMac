@@ -128,19 +128,27 @@ pub fn install(version: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove the winmac.exe.update-old an update left behind. The old process may still be on its way out, so a few tries.
+/// Clean up leftover auto-update files. A crash between `install()`'s two renames (running exe →
+/// .update-old, then .update-new → exe) leaves winmac.exe absent with both .update-old and
+/// .update-new present, so we best-effort promote .update-new back when the exe is gone, and
+/// otherwise drop stray files. The old process may still be on its way out, so a few tries.
 pub fn cleanup() {
     let Ok(exe) = std::env::current_exe() else { return };
+    let new = beside(&exe, ".update-new");
     let old = beside(&exe, ".update-old");
-    if !old.exists() {
-        return;
-    }
     std::thread::spawn(move || {
-        for _ in 0..40 {
-            if std::fs::remove_file(&old).is_ok() || !old.exists() {
-                return;
+        if !exe.exists() && new.exists() {
+            let _ = std::fs::rename(&new, &exe);
+        } else if new.exists() {
+            let _ = std::fs::remove_file(&new);
+        }
+        if old.exists() {
+            for _ in 0..40 {
+                if std::fs::remove_file(&old).is_ok() || !old.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
             }
-            std::thread::sleep(Duration::from_millis(250));
         }
     });
 }
