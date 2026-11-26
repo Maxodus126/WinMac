@@ -5,6 +5,7 @@
 #![windows_subsystem = "windows"]
 
 mod backdrop;
+mod display;
 mod badges;
 mod config;
 mod dock;
@@ -302,6 +303,10 @@ impl App {
                 shell::launch(&config::path());
                 return true;
             }
+            Change::Open => {
+                self.open_settings();
+                return true;
+            }
             Change::ResetAnimations => {
                 self.dock.update_config(fly_settings::reset_animations);
             }
@@ -426,6 +431,10 @@ impl App {
                 b.auto_hide_dock = self.dock.auto_hide();
                 match b.handle(be) {
                     Some(menubar::BarAct::Quit) => return false,
+                    Some(menubar::BarAct::Restart) => {
+                        restart();
+                        return false;
+                    }
                     Some(menubar::BarAct::ToggleAutoHide) => {
                         let on = !self.dock.auto_hide();
                         self.dock.set_auto_hide(on);
@@ -680,6 +689,7 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
         switcher::start();
     }
     if check_updates {
+        update::cleanup(); // remove a winmac.exe.update-old left by a previous auto-update
         update::start();
     }
     if std::env::args().any(|a| a == "--settings") {

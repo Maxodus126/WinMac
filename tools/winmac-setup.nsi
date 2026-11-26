@@ -7,9 +7,10 @@
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+!include "FileFunc.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.1.0"
+  !define VERSION "1.2.0"
 !endif
 
 ; Repo root. The build workflow passes -DROOT=<workspace> (absolute); without it, fall
@@ -166,20 +167,25 @@ Section "Install"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/Maxodus126/WinMac"
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
-  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" 2048
+  ; real installed size in KB (walk $INSTDIR)
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" $0
 
-  ; run at login, if chosen (HKCU Run key, so no admin needed)
-  ${NSD_GetState} $OptLogin $0
-  ${If} $0 == 1
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WinMac" '"$INSTDIR\${EXE}"'
-  ${EndIf}
+  ; run at login / launch after install. The options page is skipped in silent mode
+  ; (/S), so its checkboxes never exist there — read them only in interactive mode.
+  ${IfNot} ${Silent}
+    ${NSD_GetState} $OptLogin $0
+    ${If} $0 == 1
+      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WinMac" '"$INSTDIR\${EXE}"'
+    ${EndIf}
 
-  ; launch after install, if chosen
-  ${NSD_GetState} $OptLaunch $0
-  ${If} $0 == 1
-    ExecShell "" "$INSTDIR\${EXE}"
+    ${NSD_GetState} $OptLaunch $0
+    ${If} $0 == 1
+      ExecShell "" "$INSTDIR\${EXE}"
+    ${EndIf}
   ${EndIf}
 SectionEnd
 
@@ -200,7 +206,13 @@ Section "Uninstall"
     Sleep 300
   skip_restore:
 
-  Delete "$DESKTOP\WIN MAC.lnk"
+  ; resolve the real desktop folder (handles OneDrive redirection), matching the installer
+  StrCpy $0 "$DESKTOP"
+  ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" "Desktop"
+  ${If} $1 != ""
+    StrCpy $0 $1
+  ${EndIf}
+  Delete "$0\WIN MAC.lnk"
   RMDir /r "$SMPROGRAMS\WIN MAC"
 
   ; remove the run-at-login entry (harmless if it was never set)
@@ -213,7 +225,21 @@ Section "Uninstall"
 
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
 
-  ; full data removal (settings, cache, logs)
-  DetailPrint "Removing WIN MAC application data..."
-  RMDir /r "$APPDATA\WinMac"
+  ; data removal only with explicit consent; silent uninstall keeps user data (the safe
+  ; default — nothing is destroyed without the user asking for it)
+  ${IfNot} ${Silent}
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
+      "Do you also want to delete your WIN MAC settings and data?$\r$\nChoose No to keep them." \
+      IDYES destroy_data
+    Goto keep_data
+    destroy_data:
+      DetailPrint "Removing WIN MAC application data..."
+      RMDir /r "$APPDATA\WinMac"
+      Goto data_done
+    keep_data:
+      DetailPrint "Keeping WIN MAC application data."
+    data_done:
+  ${Else}
+    DetailPrint "Keeping WIN MAC application data."
+  ${EndIf}
 SectionEnd

@@ -14,8 +14,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindowAsync,
-    SW_HIDE,
+    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
 };
 
 const ABS_AUTOHIDE: isize = 1;
