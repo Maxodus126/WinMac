@@ -15,7 +15,7 @@ Keduanya sama-sama aplikasi native Rust, tanpa dependensi runtime eksternal.
 4. Pilih opsi: *Start Menu shortcut*, *desktop shortcut*, *jalankan setelah pemasangan*, dan *Start WIN MAC automatically when you log in* (opsional) → klik **Install**.
 5. Selesai. WIN MAC terpasang di `%LOCALAPPDATA%\Programs\WIN MAC` dan terdaftar di **Add/Remove Programs**.
 
-**Uninstall (via installer):** buka **Settings → Apps → Installed apps** (atau Control Panel → Programs) → cari **WIN MAC** → **Uninstall**. Uninstaller otomatis menutup WIN MAC, memulihkan taskbar, menghapus file program, **dan menghapus data pengaturan** (`%APPDATA%\WinMac`).
+**Uninstall (via installer):** buka **Settings → Apps → Installed apps** (atau Control Panel → Programs) → cari **WIN MAC** → **Uninstall**. Uninstaller otomatis menutup WIN MAC, memulihkan taskbar, menghapus file & shortcut, lalu **menanyakan** apakah ikut menghapus data pengaturan (`%APPDATA%\WinMac`) — pilih **Ya** untuk reset penuh, atau **Tidak** untuk mempertahankan setelan. Mode senyap (`/S`) selalu mempertahankan data.
 
 ## 1. Persyaratan
 
