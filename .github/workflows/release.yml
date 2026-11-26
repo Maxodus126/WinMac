@@ -1,9 +1,10 @@
-# Pushing a tag like v0.1.1 builds winmac.exe and publishes it as a GitHub release.
-# Release notes come from the annotated tag message (git tag -a v0.1.1 -m "...").
-name: Release
+# Builds winmac.exe + winmac-setup.exe on every push to master,
+# and creates a GitHub Release when a version tag is pushed.
+name: Build & Release
 
 on:
   push:
+    branches: ["master"]
     tags: ["v*"]
 
 permissions:
