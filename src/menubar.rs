@@ -29,6 +29,7 @@ const PAD_X: f64 = 9.0; // inside each button
 const GAP: f64 = 1.0; // between buttons
 const SIDE: f64 = 10.0; // from the screen edges
 const CB_APPBAR: u32 = WM_APP + 21;
+const WM_UPDATE_DONE: u32 = WM_APP + 22;
 const TIMER_TICK: usize = 1;
 const TIMER_DISPLAY: usize = 2;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -47,11 +48,15 @@ pub enum BarEv {
     AppBar(usize, isize),
     Display,
     Wallpaper,
+    /// a background auto-update install finished; take_install() reports the outcome
+    UpdateDone,
 }
 
 /// What the bar asks the app to do.
 pub enum BarAct {
     Quit,
+    /// an update was installed; restart the app to run it
+    Restart,
     ToggleAutoHide,
     Fullscreen(bool),
     /// a menu bar setting was switched; the app saves it to config.json
@@ -256,6 +261,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             return LRESULT(0); // we place ourselves
         }
         CB_APPBAR => push(Ev::Bar(BarEv::AppBar(w.0, l.0))),
+        WM_UPDATE_DONE => push(Ev::Bar(BarEv::UpdateDone)),
         _ => {}
     }
     DefWindowProcW(h, msg, w, l)
@@ -424,9 +430,12 @@ impl MenuBar {
         self.hidden = on;
         unsafe {
             if on {
+                // Release the top reservation so a fullscreen app covers the whole monitor.
+                self.unreserve();
                 let _ = ShowWindow(self.hwnd, SW_HIDE);
                 let _ = KillTimer(self.hwnd, TIMER_TICK);
             } else {
+                self.reserve(); // re-claim the top strip
                 SetTimer(self.hwnd, TIMER_TICK, 1000, None);
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 self.tick(true);
@@ -589,8 +598,44 @@ impl MenuBar {
                 self.load_frost();
                 self.render();
             }
+            BarEv::UpdateDone => {
+                match crate::update::take_install() {
+                    Some(Ok(_)) => return Some(BarAct::Restart),
+                    Some(Err((v, url, e))) => {
+                        if confirm(self.hwnd, &format!(
+                            "WIN MAC {v} could not be installed: {e}.\n\nOpen the release page instead?"
+                        )) {
+                            shell::launch(&url);
+                        }
+                    }
+                    None => {}
+                }
+            }
         }
         self.render();
+        None
+    }
+
+    /// Offer to install an available update: download, checksum-verify, swap the exe, restart.
+    fn offer_update(&self, v: &str, url: &str) -> Option<BarAct> {
+        let ask = format!("WIN MAC {v} is available.\n\nDownload and install it now? The app will restart.");
+        if !confirm(self.hwnd, &ask) {
+            return None;
+        }
+        if !crate::update::begin_install() {
+            inform(self.hwnd, "An update is already being installed.");
+            return None;
+        }
+        let hwnd = self.hwnd.0 as isize;
+        let v = v.to_string();
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            let r = crate::update::install(&v);
+            crate::update::finish_install(r.map(|()| v.clone()).map_err(|e| (v, url, e)));
+            unsafe {
+                let _ = PostMessageW(HWND(hwnd as *mut _), WM_UPDATE_DONE, WPARAM(0), LPARAM(0));
+            }
+        });
         None
     }
 
@@ -862,8 +907,8 @@ impl MenuBar {
             Do::Login => toggle_login(),
             Do::Settings => return Some(BarAct::OpenSettings),
             Do::OpenUpdate => {
-                if let Some((_, url)) = crate::update::available() {
-                    shell::launch(&url);
+                if let Some((v, url)) = crate::update::available() {
+                    return self.offer_update(&v, &url);
                 }
             }
             Do::CheckUpdate => {
