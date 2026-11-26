@@ -112,7 +112,7 @@ impl Default for Config {
             .collect(),
             icon_size: 52.0,
             magnify: 1.75,
-            hide_taskbar: false,
+            hide_taskbar: true,
             menu_bar: true,
             genie: true,
             icon_tiles: true,

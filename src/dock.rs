@@ -502,12 +502,19 @@ impl Dock {
             d.rc.right = sw;
             d.rc.top = sh - t;
             d.rc.bottom = sh;
-            // Ask Explorer where we actually sit (above any existing AppBar, e.g. the taskbar),
-            // then register that strip.
-            SHAppBarMessage(ABM_QUERYPOS, &mut d);
-            // capture the effective bottom BEFORE SETPOS, so the window is anchored to the
-            // reserved strip, not the full screen bottom.
-            self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            if self.cfg.hide_taskbar {
+                // HideTaskbar: dock spans the full bottom edge so it visually replaces the
+                // Windows taskbar. Don't query Explorer's position (that would stop at the
+                // taskbar's strip); just register us at the bottom edge.
+                self.win_bottom = sh as f64 / self.dpi;
+            } else {
+                // Ask Explorer where we actually sit (above any existing AppBar, e.g. the taskbar),
+                // then register that strip.
+                SHAppBarMessage(ABM_QUERYPOS, &mut d);
+                // capture the effective bottom BEFORE SETPOS, so the window is anchored to the
+                // reserved strip, not the full screen bottom.
+                self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            }
             SHAppBarMessage(ABM_SETPOS, &mut d);
         }
     }
@@ -971,9 +978,12 @@ impl Dock {
     /// The window only needs to be as wide as a fully magnified dock plus room for the label.
     fn fit_window(&mut self) {
         let (b, gap) = (self.b(), self.gap());
-        self.win_w = self
-            .screen_w
-            .min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0);
+        // When hiding the Windows taskbar, span the whole bottom edge so the dock visually replaces it.
+        self.win_w = if self.cfg.hide_taskbar {
+            self.screen_w
+        } else {
+            self.screen_w.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
+        };
         self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 64.0;
     }
 
@@ -1768,6 +1778,22 @@ impl Dock {
         let plate = gfx::rrect(pl, pt, pwid, phgt, RADIUS as f32);
         // colours are (b, g, r, a): the surface is BGRA
         let white = |a: u8| Color::from_rgba8(255, 255, 255, a);
+
+        // When HideTaskbar is on, cover the Windows taskbar with an opaque band from the top of
+        // the plate down to the bottom of the screen. The taskbar itself stays registered, so
+        // Explorer keeps a valid work area and maximized windows still stop above the dock.
+        if self.cfg.hide_taskbar {
+            if let Some(band) = Rect::from_xywh(
+                0.0,
+                plate_bottom as f32,
+                self.win_w as f32,
+                (self.win_h as f32 - plate_bottom as f32).max(0.0),
+            ) {
+                let mut paint = Paint::default();
+                paint.set_color(Color::from_rgba8(0x1C, 0x1C, 0x1E, 255));
+                pm.fill_rect(band, &paint, base, None);
+            }
+        }
 
         let mut has_glass = false;
         if let Some(plate) = &plate {
