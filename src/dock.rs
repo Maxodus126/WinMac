@@ -754,6 +754,59 @@ impl Dock {
 
     // -------------------------------------------------------------- items
 
+    /// Apply the configured icon style (dark / clear / tinted) to the icon pixels already drawn into
+    /// `pm` at (x, y) sized `s`. `default` is a no-op. A free fn so it can run on a pixmap borrowed
+    /// from `self` without a conflicting `self` borrow.
+    fn apply_icon_style_free(style: &str, pm: &mut tiny_skia::PixmapMut, x: f64, y: f64, s: f64) {
+        if style == "default" {
+            return;
+        }
+        let w = pm.width() as usize;
+        let x0 = x.max(0.0) as usize;
+        let y0 = y.max(0.0) as usize;
+        let x1 = ((x + s).min(pm.width() as f64)) as usize;
+        let y1 = ((y + s).min(pm.height() as f64)) as usize;
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (ar, ag, ab) = (crate::flyout::ACCENT.0 as u16, crate::flyout::ACCENT.1 as u16, crate::flyout::ACCENT.2 as u16);
+        let px = pm.pixels_mut();
+        for yy in y0..y1 {
+            for xx in x0..x1 {
+                let p = &mut px[yy * w + xx];
+                let a = p.alpha();
+                if a == 0 {
+                    continue;
+                }
+                let (r, g, b) = (p.red() as u16, p.green() as u16, p.blue() as u16);
+                match style {
+                    "dark" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            (r * 150 / 255) as u8, (g * 150 / 255) as u8, (b * 150 / 255) as u8, a,
+                        ).unwrap();
+                    }
+                    "clear" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            (r + (255 - r) * 110 / 255) as u8,
+                            (g + (255 - g) * 110 / 255) as u8,
+                            (b + (255 - b) * 110 / 255) as u8,
+                            a,
+                        ).unwrap();
+                    }
+                    "tinted" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            ((r * 130 + ar * 125) / 255) as u8,
+                            ((g * 130 + ag * 125) / 255) as u8,
+                            ((b * 130 + ab * 125) / 255) as u8,
+                            a,
+                        ).unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// The shell icon for an item, put on a squircle tile when tiles are on (fetched big, tiled at draw size).
     fn app_icon(&self, key: &str, spec: &str, exe: Option<&str>) -> Option<Rc<Pixmap>> {
         let px = self.icon_px();
@@ -1784,6 +1837,8 @@ impl Dock {
             self.surface = Surface::new(pw.max(1), ph.max(1));
             self.drawn.clear();
         }
+        // captured before any &mut of self.* below (icon tint runs on a pixmap borrowed from self)
+        let icon_style = self.cfg.icon_style.clone();
         // the label text is rasterized by GDI at the real pixel size, once per name
         if let Some(i) = self.hovered {
             let name = &self.items[i].name;
@@ -2013,6 +2068,7 @@ impl Dock {
                 let tf = base.pre_translate(ix as f32, iy as f32).pre_scale(s, s);
                 let pp = PixmapPaint { opacity: opacity as f32, quality: FilterQuality::Bilinear, ..Default::default() };
                 pm.draw_pixmap(0, 0, ic.as_ref().as_ref(), &pp, tf, None);
+                Self::apply_icon_style_free(&icon_style, &mut pm, ix, iy, it.size);
             }
             let a = it.dot * it.presence;
             if a > 0.01 {

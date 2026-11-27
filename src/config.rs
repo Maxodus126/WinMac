@@ -63,6 +63,8 @@ pub struct Config {
     pub language: String,
     /// All apps: "apps" (the macOS 26 Apps window, the default) or "classic" (the full-screen Launchpad).
     pub launchpad_style: String,
+    /// Dock icon rendering: "default" | "dark" | "clear" | "tinted".
+    pub icon_style: String,
     /// Keys we don't know (written by a newer build) survive a save.
     extra: Map<String, Value>,
 }
@@ -149,6 +151,7 @@ impl Default for Config {
             reduce_motion: false,
             language: "auto".into(),
             launchpad_style: "apps".into(),
+            icon_style: "default".into(),
             extra: Map::new(),
         }
     }
@@ -211,6 +214,11 @@ impl Config {
         if let Some(l) = v.remove("LaunchpadStyle").and_then(|x| x.as_str().map(String::from)) {
             if ["apps", "classic"].contains(&l.as_str()) {
                 c.launchpad_style = l;
+            }
+        }
+        if let Some(s) = v.remove("IconStyle").and_then(|x| x.as_str().map(String::from)) {
+            if ["default", "dark", "clear", "tinted"].contains(&s.as_str()) {
+                c.icon_style = s;
             }
         }
         if let Some(Value::Array(r)) = v.remove("Recent") {
@@ -303,6 +311,7 @@ impl Config {
             "ReduceMotion": self.reduce_motion,
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
@@ -394,6 +403,7 @@ impl Config {
             "ReduceMotion": self.reduce_motion,
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
