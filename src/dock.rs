@@ -464,7 +464,9 @@ impl Dock {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
-        if !self.cfg.auto_hide {
+        // When HideTaskbar is on the dock replaces the Windows taskbar, so it MUST reserve
+        // its strip even in auto-hide mode; otherwise maximized windows extend under it.
+        if self.cfg.hide_taskbar || !self.cfg.auto_hide {
             self.reserve();
         }
     }
@@ -560,7 +562,7 @@ impl Dock {
         self.appbar = false;
         // not while hidden for fullscreen: a re-registration here would void the release in
         // set_fullscreen_hidden and shrink the work area under a fullscreen app again
-        if !self.cfg.auto_hide && !self.hidden {
+        if self.should_reserve() {
             self.reserve();
         }
     }
@@ -570,7 +572,7 @@ impl Dock {
         // not while hidden for fullscreen: main.rs calls us on every Refresh, which keeps firing (every
         // 3 s) while the dock is hidden, so without this guard the strip would be re-registered under a
         // fullscreen app and the work area would never release
-        if !self.appbar && !self.cfg.auto_hide && !self.hidden {
+        if !self.appbar && self.should_reserve() {
             self.reserve();
         }
     }
@@ -594,6 +596,14 @@ impl Dock {
 
     pub fn auto_hide(&self) -> bool {
         self.cfg.auto_hide
+    }
+
+    /// Should this dock hold an AppBar reservation? When HideTaskbar is on the dock replaces the
+    /// Windows taskbar so it must reserve its strip even in auto-hide mode; otherwise maximized
+    /// windows extend under it. Never reserve while hidden for fullscreen — that would void the
+    /// release in set_fullscreen_hidden and shrink the work area under a fullscreen app.
+    pub fn should_reserve(&self) -> bool {
+        !self.hidden && (self.cfg.hide_taskbar || !self.cfg.auto_hide)
     }
 
     fn persist(&mut self) {
@@ -735,7 +745,7 @@ impl Dock {
         (self.screen_w, self.screen_h, self.dpi) = self.display.dimensions();
         self.fit_b = f64::MAX;
         self.fit_icons();
-        if !self.cfg.auto_hide && !self.hidden {
+        if self.should_reserve() {
             self.reserve(); // not while hidden for fullscreen: we'd void the release on entering it
         }
         self.fit_window();
@@ -800,7 +810,7 @@ impl Dock {
             self.awake = false;
             self.surface = None; // its pixels are big; it comes back on the next frame
         } else {
-            if !self.cfg.auto_hide {
+            if self.should_reserve() {
                 self.reserve(); // re-claim the reserved strip
             }
             self.wake();
@@ -1118,7 +1128,7 @@ impl Dock {
             // not while hidden for fullscreen: apply_display -> fit_icons runs on WM_DISPLAYCHANGE,
             // which is broadcast to hidden windows too, and a reserve here would shrink the work area
             // under the fullscreen app again
-            if !self.cfg.auto_hide && !self.hidden {
+            if self.should_reserve() {
                 self.reserve(); // the plate got shorter or taller
             }
             for it in &mut self.items {
@@ -1950,16 +1960,27 @@ impl Dock {
         // colours are (b, g, r, a): the surface is BGRA
         let white = |a: u8| Color::from_rgba8(255, 255, 255, a);
 
-        // When HideTaskbar is on, cover the Windows taskbar with an opaque band from the top of
-        // the plate down to the bottom of the screen. The taskbar itself stays registered, so
-        // Explorer keeps a valid work area and maximized windows still stop above the dock.
+        // When HideTaskbar is on, cover the Windows taskbar with an opaque band next to the plate.
+        // The taskbar itself stays registered, so Explorer keeps a valid work area and maximized
+        // windows still stop above the dock. For a bottom dock the band hangs below the plate;
+        // for a side dock it hangs beside the plate.
         if self.cfg.hide_taskbar {
-            if let Some(band) = Rect::from_xywh(
-                0.0,
-                plate_bottom as f32,
-                self.win_w as f32,
-                (self.win_h as f32 - plate_bottom as f32).max(0.0),
-            ) {
+            let band = match self.cfg.dock_position.as_str() {
+                "left" => Rect::from_xywh(0.0, 0.0, self.plate_left as f32, self.win_h as f32),
+                "right" => Rect::from_xywh(
+                    (self.plate_left + self.plate_w) as f32,
+                    0.0,
+                    self.win_w as f32 - (self.plate_left + self.plate_w) as f32,
+                    self.win_h as f32,
+                ),
+                _ => Rect::from_xywh(
+                    0.0,
+                    plate_bottom as f32,
+                    self.win_w as f32,
+                    (self.win_h as f32 - plate_bottom as f32).max(0.0),
+                ),
+            };
+            if let Some(band) = band {
                 let mut paint = Paint::default();
                 paint.set_color(Color::from_rgba8(0x1C, 0x1C, 0x1E, 255));
                 pm.fill_rect(band, &paint, base, None);
@@ -2309,7 +2330,7 @@ impl Dock {
             DockEv::AppBar(ABN_POSCHANGED, _) => {
                 // not while hidden for fullscreen: our own ABM_REMOVE in set_fullscreen_hidden fires
                 // ABN_POSCHANGED, which would otherwise re-register the strip we just released
-                if !self.cfg.auto_hide && !self.hidden {
+                if self.should_reserve() {
                     self.reserve();
                 }
             }

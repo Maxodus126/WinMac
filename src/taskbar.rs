@@ -57,21 +57,35 @@ pub fn explorer_pid() -> Option<u32> {
 /// hide the bar window itself so it does not peek out of the dock's strip.
 ///
 /// Autohide alone leaves a 2-px peek strip; SW_HIDE removes the window entirely. Together they keep
-/// the taskbar gone while Explorer's work area stays correct.
+/// the taskbar gone while Explorer's work area stays correct. Every bar (primary + secondary
+/// monitors) is handled, so multi-monitor setups hide all of them.
 pub fn hide() {
     let Some(main) = main_bar() else { return };
-    unsafe {
+    let state = unsafe {
         let mut d = data(main, 0);
-        let state = SHAppBarMessage(ABM_GETSTATE, &mut d) as isize;
-        if !HIDDEN.get() {
-            ORIGINAL.set(state);
-        }
-        if state & ABS_AUTOHIDE == 0 {
-            let mut d = data(main, state | ABS_AUTOHIDE);
-            SHAppBarMessage(ABM_SETSTATE, &mut d);
-        }
-        if IsWindowVisible(main).as_bool() {
-            let _ = ShowWindow(main, SW_HIDE);
+        SHAppBarMessage(ABM_GETSTATE, &mut d) as isize
+    };
+    if !HIDDEN.get() {
+        ORIGINAL.set(state);
+    }
+    let autohide_on = if state & ABS_AUTOHIDE != 0 {
+        true // already autohiding: Explorer keeps the work area correct
+    } else {
+        let mut d = data(main, state | ABS_AUTOHIDE);
+        unsafe { SHAppBarMessage(ABM_SETSTATE, &mut d) != 0 }
+    };
+    if !autohide_on {
+        // Explorer refused the autohide request: do NOT hide the window (that would desync the
+        // work area from what Explorer thinks) and do not latch HIDDEN, so a later restore() won't
+        // undo Explorer's own state.
+        return;
+    }
+    // Hide each bar window (primary + every secondary monitor taskbar).
+    for b in bars() {
+        unsafe {
+            if IsWindowVisible(b).as_bool() {
+                let _ = ShowWindow(b, SW_HIDE);
+            }
         }
     }
     HIDDEN.set(true);
@@ -97,17 +111,19 @@ pub fn restore(force: bool) {
         return;
     }
     unwatch();
-    let Some(main) = main_bar() else { return };
-    unsafe {
-        let mut d = data(main, 0);
-        let live = SHAppBarMessage(ABM_GETSTATE, &mut d) as isize;
-        let target = if hidden { ORIGINAL.get() } else { live & !ABS_AUTOHIDE };
-        let mut d = data(main, target);
-        SHAppBarMessage(ABM_SETSTATE, &mut d);
-        // SW_HIDE hid the bar window itself during hide(); make sure it is shown again so the
-        // taskbar actually comes back (ABM_SETSTATE alone does not un-hide a hidden window).
-        if IsWindowVisible(main).as_bool() == false {
-            let _ = ShowWindow(main, SW_SHOW);
+    // Restore every bar window (primary + secondary monitors).
+    for b in bars() {
+        unsafe {
+            let mut d = data(b, 0);
+            let live = SHAppBarMessage(ABM_GETSTATE, &mut d) as isize;
+            let target = if hidden { ORIGINAL.get() } else { live & !ABS_AUTOHIDE };
+            let mut d = data(b, target);
+            SHAppBarMessage(ABM_SETSTATE, &mut d);
+            // SW_HIDE hid the bar window itself during hide(); make sure it is shown again so the
+            // taskbar actually comes back (ABM_SETSTATE alone does not un-hide a hidden window).
+            if IsWindowVisible(b).as_bool() == false {
+                let _ = ShowWindow(b, SW_SHOW);
+            }
         }
     }
     HIDDEN.set(false);

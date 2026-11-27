@@ -206,6 +206,13 @@ impl App {
         let on = full_rect == Some(self.dock.display.rect);
         if on != self.fullscreen {
             self.fullscreen = on;
+            if !on {
+                // Re-hide the Windows taskbar BEFORE the dock and menu bar re-claim their AppBar
+                // strips: Explorer re-shows its bar as the fullscreen app leaves, and if our
+                // reservations land first there is a transient window where the visible bar and our
+                // strip occupy the same screen edge (a brief blank/overlap flicker).
+                taskbar::keep_hidden();
+            }
             self.dock.set_fullscreen_hidden(on);
             if let Some(g) = self.genie.as_mut() {
                 g.pause(on); // game mode: nothing of ours in the input path
@@ -213,9 +220,6 @@ impl App {
             ai_usage::set_paused(on);
             if let Some(b) = self.bar.as_mut() {
                 b.set_hidden(on);
-            }
-            if !on {
-                taskbar::keep_hidden(); // Explorer re-shows it as the fullscreen app leaves
             }
         }
     }
