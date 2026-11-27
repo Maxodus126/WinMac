@@ -10,7 +10,7 @@
 !include "FileFunc.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.2.1"
+  !define VERSION "1.2.3"
 !endif
 
 ; Repo root. The build workflow passes -DROOT=<workspace> (absolute); without it, fall
