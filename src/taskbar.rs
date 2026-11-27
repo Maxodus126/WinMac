@@ -1,11 +1,12 @@
 //! Windows-taskbar handling.
 //!
-//! HideTaskbar=true: we reserve our strip as an AppBar and ask Explorer to autohide its own taskbar
-//! via ABM_SETSTATE. Explorer does the actual hiding and keeps the work area correct, so maximized
-//! windows stop above the dock instead of covering it.
+//! HideTaskbar=true: we reserve our strip as an AppBar, ask Explorer to autohide its taskbar via
+//! ABM_SETSTATE (so the work area stays correct), and also hide the bar window itself so its
+//! autohide peek strip does not show through the dock. Verified on Windows 11 26100+: SW_HIDE no
+//! longer collapses the work area, so both are safe together.
 //!
-//! We deliberately never call ShowWindow(SW_HIDE) on Shell_TrayWnd: that collapses Explorer's work
-//! area to 0x0,0x0 and makes every maximized window cover the dock.
+//! The dock's own AppBar reservation is what makes maximized windows stop above the dock; hiding
+//! the taskbar window does not change that.
 
 use std::cell::Cell;
 
@@ -52,8 +53,11 @@ pub fn explorer_pid() -> Option<u32> {
     (pid != 0).then_some(pid)
 }
 
-/// Hide the Windows taskbar: set ABM_SETSTATE autohide (so Explorer keeps a sensible work area) and
-/// also hide the bar window itself, so it does not peek up out of the dock's strip.
+/// Hide the Windows taskbar: set ABM_SETSTATE autohide (Explorer keeps a sensible work area) and
+/// hide the bar window itself so it does not peek out of the dock's strip.
+///
+/// Autohide alone leaves a 2-px peek strip; SW_HIDE removes the window entirely. Together they keep
+/// the taskbar gone while Explorer's work area stays correct.
 pub fn hide() {
     let Some(main) = main_bar() else { return };
     unsafe {

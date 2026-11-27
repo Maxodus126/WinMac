@@ -657,17 +657,29 @@ fn foreground_fullscreen_rect() -> Option<RECT> {
         if ["Progman", "WorkerW", "Shell_TrayWnd"].contains(&cls.as_str()) {
             return None;
         }
-        // anything with a title bar is not fullscreen, even when it covers the whole screen because no AppBar
-        // space is reserved; a fullscreen app sits exactly on the monitor without one. Not IsZoomed: Chrome and
-        // Edge keep WS_MAXIMIZE when a maximized window goes fullscreen (F11, YouTube), only the caption goes.
-        if GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION.0 as isize == WS_CAPTION.0 as isize {
-            return None;
-        }
+        // Fullscreen detection: a real fullscreen app (borderless-windowed or exclusive) covers either the
+        // whole monitor or the whole work area. Chrome/Edge keep WS_MAXIMIZE when they go fullscreen (F11,
+        // YouTube) — only the caption goes — so we do NOT reject WS_CAPTION here; instead we check geometry.
         let mut r = RECT::default();
         if GetWindowRect(fg, &mut r).is_err() {
             return None;
         }
-        Some(r)
+        let screen = RECT {
+            left: 0, top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN),
+        };
+        // work area (monitor minus AppBars, e.g. the dock's own strip)
+        let mut work = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut work as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)).is_err() {
+            return None;
+        }
+        let covers = |r: &RECT, target: &RECT| r.left <= target.left && r.top <= target.top && r.right >= target.right && r.bottom >= target.bottom;
+        if covers(&r, &screen) || covers(&r, &work) {
+            Some(r)
+        } else {
+            None
+        }
     }
 }
 
