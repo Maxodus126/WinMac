@@ -323,7 +323,7 @@ fn paint(sf: &mut Surface, entries: &[Entry], texts: &[Option<(Pixmap, Option<Pi
                 let op = if *enabled { 1.0 } else { 0.4 };
                 if hover == Some(i) && *enabled {
                     if let Some(hl) = gfx::rrect(left as f32, y as f32, cw as f32, ITEM_H as f32, 5.0) {
-                        paint.set_color(Color::from_rgba8(0xFF, 0x84, 0x0A, 0xFF));
+                        paint.set_color(Color::from_rgba8(0x0A, 0x84, 0xFF, 0xFF)); // accent blue #0A84FF
                         pm.fill_path(&hl, &paint, FillRule::Winding, base, None);
                     }
                 }

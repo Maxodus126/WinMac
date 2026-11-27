@@ -1056,7 +1056,7 @@ Open the download page?")) {
                         // update available: a small blue dot on the logo's top-right corner, like a badge
                         if let Some(p) = tiny_skia::PathBuilder::from_circle(cx + 13.0 * dpi, mid - 6.5 * dpi, 3.2 * dpi) {
                             let mut paint = Paint::default();
-                            paint.set_color_rgba8(0xFF, 0x84, 0x0A, 0xFF); // BGRA: #0A84FF
+                            paint.set_color_rgba8(0x0A, 0x84, 0xFF, 0xFF); // accent blue #0A84FF
                             paint.anti_alias = true;
                             content.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
                         }

@@ -341,6 +341,10 @@ pub struct Dock {
     win_bottom: f64,
     /// dock screen edge: "bottom" (default), "left" or "right".
     dock_position: String,
+    /// Cached drop shadow for the dock plate (offset + alpha premultiplied).
+    dock_shadow: Option<(Pixmap, i32, i32)>,
+    /// Plate height at which the shadow was last rebuilt.
+    shadow_plate_h: u32,
     items: Vec<Item>,
     icons: HashMap<String, (String, Option<Rc<Pixmap>>)>, // name + icon per item key, kept across app restarts
     surface: Option<Surface>,
@@ -438,6 +442,7 @@ impl Dock {
             pressed: None, press_pt: (0.0, 0.0), dragging: false, drag_out: false, drag_x: 0.0,
             last_app: unsafe { GetForegroundWindow() },
             seen: None, toasts: Vec::new(), toast_job: None, look_pending: false,
+            dock_shadow: None, shadow_plate_h: 0,
         }
     }
 
@@ -756,9 +761,20 @@ impl Dock {
         for i in 0..self.items.len() {
             let it = &self.items[i];
             let icon = if it.trash {
-                shell::icon(TRASH, px).map(Rc::new)
+                let raw = shell::icon(TRASH, px);
+                if self.cfg.icon_tiles {
+                    raw.and_then(|r| tile::make(&r, px)).map(Rc::new).or_else(|| shell::icon(TRASH, px).map(Rc::new))
+                } else {
+                    raw.map(Rc::new)
+                }
             } else if it.stack {
-                downloads_dir().and_then(|d| shell::icon(&d, px)).map(Rc::new)
+                downloads_dir().and_then(|d| shell::icon(&d, px)).and_then(|raw| {
+                    if self.cfg.icon_tiles {
+                        tile::make(&raw, px)
+                    } else {
+                        None
+                    }
+                }).map(Rc::new)
             } else {
                 it.launch.clone().and_then(|src| self.app_icon(&it.key, &src, it.exe.clone().as_deref()))
             };
@@ -1956,6 +1972,34 @@ impl Dock {
 
         let base = Transform::from_scale(dpi as f32, dpi as f32).pre_translate(0.0, slide as f32);
         let (pl, pt, pwid, phgt) = (self.plate_left as f32, plate_top as f32, self.plate_w as f32, (plate_bottom - plate_top) as f32);
+
+        // Rebuild the dock's drop shadow whenever the plate size changes (icon magnification
+        // changes the plate height). Drawn as a real blurred pill shadow under the plate.
+        let cur_plate = (plate_bottom - plate_top) as u32;
+        if self.dock_shadow.is_none() || self.shadow_plate_h != cur_plate {
+            self.shadow_plate_h = cur_plate;
+            let pad = 12.0;
+            let shadow_w = (pwid as f32 + pad * 2.0).ceil() as u32;
+            let shadow_h = (phgt as f32 + pad * 2.0).ceil() as u32;
+            let mut sp = Pixmap::new(shadow_w, shadow_h).unwrap_or_else(|| Pixmap::new(1, 1).expect("shadow pixmap"));
+            let path = gfx::rrect(pad, pad, pwid, phgt, RADIUS as f32);
+            if let Some(p) = path {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(tiny_skia::Color::from_rgba8(0, 0, 0, 0x40));
+                sp.fill_path(&p, &paint, FillRule::Winding, Transform::from_translate(-pad as f32, -pad as f32), None);
+                gfx::blur(&mut sp, 10.0);
+                self.dock_shadow = Some((sp, -pad as i32, -pad as i32));
+            }
+        }
+
+        // Drop shadow under the dock plate: a real blurred shadow so the dock reads as floating
+        // above the wallpaper instead of pasted flat on top of it. Drawn once per plate resize.
+        if let Some((shadow_px, shadow_ox, shadow_oy)) = &self.dock_shadow {
+            let ox = ((pl - 12.0) * dpi as f32).round() as i32 + shadow_ox;
+            let oy = ((pt + slide as f32 - 12.0) * dpi as f32).round() as i32 + shadow_oy;
+            gfx::blit_over(&mut pm, shadow_px, ox, oy);
+        }
         let plate = gfx::rrect(pl, pt, pwid, phgt, RADIUS as f32);
         // colours are (b, g, r, a): the surface is BGRA
         let white = |a: u8| Color::from_rgba8(255, 255, 255, a);
@@ -2040,7 +2084,7 @@ impl Dock {
                         b.draw(region, &mut comp);
                     }
                 }
-                gfx::soften(&mut comp);
+                gfx::blur(&mut comp, 10.0); // real frost: 10 DIP blur behind the dock plate
                 Some(comp)
             }) };
             if let Some(c) = fresh {
