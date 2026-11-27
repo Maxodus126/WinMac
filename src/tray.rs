@@ -130,6 +130,42 @@ fn guid_at(b: &[u8], o: usize) -> Option<GUID> {
     (g != GUID::zeroed()).then_some(g)
 }
 
+/// Native (pointer-width-dependent) field offsets of NOTIFYICONDATAW. The tray protocol carries the
+/// sender's own structure layout: on 64-bit senders HWND/HICON are 8-byte, so the old hardcoded
+/// 32-bit-packed offsets misread every field (mis-identity, wrong flags/callback, broken hicon/tip,
+/// and NIM_SETVERSION/GUID read entirely out of bounds). Computed from pointer size to match the
+/// current build (x64), and reads are further capped against the payload length at call sites.
+#[derive(Clone, Copy)]
+struct NidOffsets {
+    hwnd: usize,
+    uid: usize,
+    flags: usize,
+    callback: usize,
+    hicon: usize,
+    tip: usize,
+    state: usize,
+    statemask: usize,
+    version: usize,
+    guid: usize,
+}
+
+fn nid_offsets() -> NidOffsets {
+    let p = std::mem::size_of::<isize>(); // HWND/HICON width
+    let hwnd = p;
+    let uid = hwnd + p;
+    let flags = uid + 4;
+    let callback = flags + 4;
+    let hicon = (callback + 4).div_ceil(p) * p;
+    let tip = hicon + p;
+    let state = tip + 256; // szTip[128] WCHAR
+    let statemask = state + 4;
+    let info = statemask + 4;
+    let version = info + 512; // szInfo[256] WCHAR
+    let title = version + 4;
+    let infof = title + 128; // szInfoTitle[64] WCHAR
+    NidOffsets { hwnd, uid, flags, callback, hicon, tip, state, statemask, version, guid: infof + 4 }
+}
+
 /// An HICON as premultiplied BGRA: drawn on black and on white, alpha from the difference (works for 32-bit
 /// icons and for old masked ones alike).
 pub fn icon_pixmap(hicon: u32, px: u32) -> Option<Pixmap> {
@@ -180,15 +216,16 @@ fn app_name(hwnd: u32) -> String {
     exe.map(|e| crate::shell::friendly_name(Some(&e), None, "")).unwrap_or_default()
 }
 
-/// Shell_NotifyIcon arriving as WM_COPYDATA (dwData 1): SHELLTRAYDATA { signature, message, NOTIFYICONDATA32 }.
+/// Shell_NotifyIcon arriving as WM_COPYDATA (dwData 1): SHELLTRAYDATA { signature, message, NOTIFYICONDATA }.
 fn on_notify(host: &mut Host, b: &[u8]) -> bool {
     if b.len() < 8 + 24 {
         return false;
     }
     let msg = u32_at(b, 4);
     let n = &b[8..];
-    let (hwnd, uid, flags) = (u32_at(n, 4), u32_at(n, 8), u32_at(n, 12));
-    let guid = if flags & 0x20 != 0 { guid_at(n, 936) } else { None };
+    let o = nid_offsets();
+    let (hwnd, uid, flags) = (u32_at(n, o.hwnd), u32_at(n, o.uid), u32_at(n, o.flags));
+    let guid = if flags & 0x20 != 0 { guid_at(n, o.guid) } else { None };
     let pos = host.icons.iter().position(|i| match (guid, i.guid) {
         (Some(g), Some(ig)) => g == ig,
         _ => i.hwnd == hwnd && i.uid == uid,
@@ -208,20 +245,20 @@ fn on_notify(host: &mut Host, b: &[u8]) -> bool {
             };
             let ic = &mut host.icons[i];
             if flags & 1 != 0 {
-                ic.callback = u32_at(n, 16);
+                ic.callback = u32_at(n, o.callback);
             }
             if flags & 2 != 0 {
-                let hicon = u32_at(n, 20);
+                let hicon = u32_at(n, o.hicon);
                 if hicon != ic.hicon || ic.image.is_none() {
                     ic.hicon = hicon;
                     ic.image = icon_pixmap(hicon, 32);
                 }
             }
             if flags & 4 != 0 {
-                ic.tip = wstr(n, 24, 128);
+                ic.tip = wstr(n, o.tip, 128);
             }
             if flags & 8 != 0 {
-                let (state, mask) = (u32_at(n, 280), u32_at(n, 284));
+                let (state, mask) = (u32_at(n, o.state), u32_at(n, o.statemask));
                 if mask & 1 != 0 {
                     ic.hidden = state & 1 != 0;
                 }
@@ -240,7 +277,7 @@ fn on_notify(host: &mut Host, b: &[u8]) -> bool {
         4 => {
             // NIM_SETVERSION
             if let Some(p) = pos {
-                host.icons[p].version = u32_at(n, 800);
+                host.icons[p].version = u32_at(n, o.version);
                 true
             } else {
                 false
@@ -252,7 +289,11 @@ fn on_notify(host: &mut Host, b: &[u8]) -> bool {
 
 /// Shell_NotifyIconGetRect (dwData 3): WINNOTIFYICONIDENTIFIER { magic, message, cbSize, pad, hWnd, uID, guid }.
 fn on_identify(host: &Host, b: &[u8]) -> isize {
-    let (msg, hwnd, uid, guid) = (u32_at(b, 4), u32_at(b, 16), u32_at(b, 20), guid_at(b, 24));
+    let p = std::mem::size_of::<isize>();
+    let hwnd = u32_at(b, 12 + p); // hWnd after magic+message+cbSize+pad (pointer-aligned)
+    let uid = u32_at(b, 12 + p + p);
+    let guid = guid_at(b, 12 + p + p + 4);
+    let (msg, hwnd, uid, guid) = (u32_at(b, 4), hwnd, uid, guid);
     let Some(ic) = host.icons.iter().find(|i| match (guid, i.guid) {
         (Some(g), Some(ig)) => g == ig,
         _ => i.hwnd == hwnd && i.uid == uid,
@@ -272,7 +313,11 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
     match msg {
         WM_COPYDATA => {
             let cds = &*(lp.0 as *const COPYDATASTRUCT);
-            let bytes = if cds.lpData.is_null() { &[][..] } else { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize) };
+            // Cap the peer-supplied length so a buggy/hostile process can't make us read OOB. The
+            // largest packet we can meaningfully consume is a NOTIFYICONDATAW plus the tray header, a
+            // generous bound; anything bigger is not one of ours.
+            const MAX_COPYDATA: usize = 4 * 1024;
+            let bytes = if cds.lpData.is_null() || cds.cbData as usize > MAX_COPYDATA { &[][..] } else { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize) };
             let r = HOST.with(|host| {
                 let Ok(mut g) = host.try_borrow_mut() else { return None };
                 let host = g.as_mut()?;

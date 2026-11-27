@@ -342,8 +342,11 @@ impl App {
                         } else {
                             taskbar::restore(false);
                         }
-                        // the taskbar's reservation changed: re-anchor the dock to where it now sits
-                        self.dock.reserve();
+                        // the taskbar's reservation changed: re-anchor the dock to where it now sits,
+                        // but not under a fullscreen app (the release would be re-added)
+                        if self.dock.is_visible() {
+                            self.dock.reserve();
+                        }
                     }
                     Key::BatteryPct | Key::AiUsage | Key::TrayIcons => {
                         let (o, on) = match k {
