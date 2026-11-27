@@ -28,6 +28,15 @@ const ID_VOL: u32 = 9;
 const ID_PREV: u32 = 10;
 const ID_PLAY: u32 = 11;
 const ID_NEXT: u32 = 12;
+const ID_SHORTCUT: u32 = 30;
+const SHORTCUTS: [(&str, char, &str); 6] = [
+    ("Wi-Fi", '\u{E701}', "ms-settings:network-wifi"),
+    ("Bluetooth", '\u{E702}', "ms-settings:bluetooth"),
+    ("Display", '\u{E706}', "ms-settings:display"),
+    ("Sound", '\u{E74F}', "ms-settings:sound"),
+    ("Battery", '\u{E83F}', "ms-settings:batterysaver"),
+    ("Personalize", '\u{E771}', "ms-settings:personalization"),
+];
 
 static MANAGER: Mutex<Option<Manager>> = Mutex::new(None);
 /// what the slow reads said last time (Energy Saver ~90 ms, the Wi-Fi name ~30 ms), shown while they run again
@@ -309,6 +318,12 @@ impl Content for ControlCenter {
             }
             ID_POWER_TEXT => return Cmd::Launch("ms-settings:powersleep".into()),
             ID_PREV | ID_PLAY | ID_NEXT => self.media_cmd(id),
+            id if (ID_SHORTCUT..ID_SHORTCUT + SHORTCUTS.len() as u32).contains(&id) => {
+                let i = (id - ID_SHORTCUT) as usize;
+                if let Some((_, _, uri)) = SHORTCUTS.get(i) {
+                    return Cmd::Launch(uri.to_string());
+                }
+            }
             _ => {}
         }
         Cmd::None
@@ -372,6 +387,37 @@ impl Content for ControlCenter {
             };
             slider(ui, id, 10.0, sy, SLIDER_W, v, g);
             y += h + 8.0;
+        }
+
+        // shortcuts: quick links to the key Settings panes
+        {
+            let title_h = ui.line_h(12.5, 600);
+            let tile_h = 46.0;
+            let head_h = 10.0 + title_h + 8.0;
+            let grid_w = w - 20.0;
+            let cols = 3;
+            let gap = 8.0;
+            let cw = (grid_w - gap * (cols - 1) as f32) / cols as f32;
+            let rows = SHORTCUTS.len().div_ceil(cols);
+            let total_h = head_h + rows as f32 * (tile_h + gap);
+            tile(ui, 0.0, y, w, total_h);
+            ui.text(12.0, y + 10.0, "Shortcuts", 12.5, 600, white(0xF2), 0.0);
+            let sy = y + head_h;
+            for (i, (label, g, _)) in SHORTCUTS.iter().enumerate() {
+                let col = i % cols;
+                let row = i / cols;
+                let x = 10.0 + col as f32 * (cw + gap);
+                let yy = sy + row as f32 * (tile_h + gap);
+                let id = ID_SHORTCUT + i as u32;
+                if ui.hit(id, x, yy, cw, tile_h) {
+                    ui.fill(x, yy, cw, tile_h, 10.0, white(0x1E));
+                } else {
+                    ui.fill(x, yy, cw, tile_h, 10.0, white(0x14));
+                }
+                ui.glyph(x + cw / 2.0, yy + 15.0, *g, 15.0, white(0xE0));
+                ui.text_mid(x, yy + 24.0, label, 11.0, 500, white(0xAE), cw);
+            }
+            y += total_h + 8.0;
         }
 
         // now playing
