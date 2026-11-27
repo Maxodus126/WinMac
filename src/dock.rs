@@ -17,7 +17,7 @@ use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
-use windows::Win32::UI::Shell::{SHAppBarMessage, SHEmptyRecycleBinW, ABE_BOTTOM, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
+use windows::Win32::UI::Shell::{SHAppBarMessage, SHEmptyRecycleBinW, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::badges;
@@ -339,6 +339,8 @@ pub struct Dock {
     /// bottom edge the dock is anchored to: the AppBar strip returned by ABM_QUERYPOS
     /// (above the Windows taskbar when it is visible), or the screen bottom otherwise.
     win_bottom: f64,
+    /// dock screen edge: "bottom" (default), "left" or "right".
+    dock_position: String,
     items: Vec<Item>,
     icons: HashMap<String, (String, Option<Rc<Pixmap>>)>, // name + icon per item key, kept across app restarts
     surface: Option<Surface>,
@@ -403,10 +405,17 @@ impl Dock {
         self.b() + PAD * 2.0
     }
     fn win_x(&self) -> f64 {
-        self.display.rect.left as f64 / self.dpi + (self.screen_w - self.win_w) / 2.0
+        match self.cfg.dock_position.as_str() {
+            "left" => self.display.rect.left as f64 / self.dpi,
+            "right" => (self.display.rect.right as f64 / self.dpi) - self.win_w,
+            _ => self.display.rect.left as f64 / self.dpi + (self.screen_w - self.win_w) / 2.0,
+        }
     }
     fn win_y(&self) -> f64 {
-        self.win_bottom - self.win_h
+        match self.cfg.dock_position.as_str() {
+            "left" | "right" => self.display.rect.top as f64 / self.dpi + (self.screen_h - self.win_h) / 2.0,
+            _ => self.win_bottom - self.win_h,
+        }
     }
     fn icon_px(&self) -> u32 {
         // icon_size is clamped to >=16 on load, but stay defensive: a 0 px pixmap
@@ -418,9 +427,10 @@ impl Dock {
     pub fn new(hwnd: HWND, cfg: Config, display: Display) -> Dock {
         let (screen_w, screen_h, dpi) = display.dimensions();
         let now = Instant::now();
+        let dock_position = cfg.dock_position.clone();
         Dock {
             hwnd, cfg, display, config_dirty: false, shell: Shell::default(), dpi, screen_w, screen_h, fit_b: f64::MAX,
-            win_w: 1.0, win_h: 1.0, win_bottom: screen_h, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
+            win_w: 1.0, win_h: 1.0, win_bottom: screen_h, dock_position, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
             label: None, label_alpha: 0.0, menu_up: false, drag_files: false, label_at: (0.0, 0.0, 0.0, 0.0), hovered: None, plate_left: 0.0,
             plate_w: 0.0, seps: Vec::new(), running_now: HashMap::new(), clock: now, last_t: 0.0, awake: false, hidden: false,
             sig: String::new(), refreshes: 0, appbar: false,
@@ -484,14 +494,18 @@ impl Dock {
             cbSize: std::mem::size_of::<APPBARDATA>() as u32,
             hWnd: self.hwnd,
             uCallbackMessage: CB_APPBAR,
-            uEdge: ABE_BOTTOM,
+            uEdge: match self.cfg.dock_position.as_str() {
+                "left" => ABE_LEFT,
+                "right" => ABE_RIGHT,
+                _ => ABE_BOTTOM,
+            },
             ..Default::default()
         }
     }
 
-    /// Reserve the strip at the bottom so maximized windows stop above the dock.
+    /// Reserve the strip at the chosen edge so maximized windows stop above the dock.
     pub fn reserve(&mut self) {
-        // the strip the dock visually occupies: the plate plus the small gap under it
+        // the strip the dock visually occupies: the plate plus the small gap beside/below it
         let t = ((self.plate_h() + BOTTOM_GAP) * self.dpi).round() as i32;
         let mut d = self.appbar_data();
         unsafe {
@@ -503,18 +517,38 @@ impl Dock {
             }
             // anchor the reserved strip to THIS dock's monitor (identically to the old
             // primary-only math when the monitor origin is (0,0))
-            d.rc = self.display.bottom_strip(t);
-            if self.cfg.hide_taskbar {
+            match self.cfg.dock_position.as_str() {
+                "left" => {
+                    d.rc.left = self.display.rect.left;
+                    d.rc.right = d.rc.left + t;
+                    d.rc.top = self.display.rect.top;
+                    d.rc.bottom = self.display.rect.bottom;
+                }
+                "right" => {
+                    d.rc.right = self.display.rect.right;
+                    d.rc.left = d.rc.right - t;
+                    d.rc.top = self.display.rect.top;
+                    d.rc.bottom = self.display.rect.bottom;
+                }
+                _ => {
+                    d.rc = self.display.bottom_strip(t);
+                }
+            }
+            if self.cfg.hide_taskbar && self.cfg.dock_position == "bottom" {
                 // HideTaskbar: dock spans the full bottom edge so it visually replaces the
                 // Windows taskbar. Don't query Explorer's position (that would stop at the
                 // taskbar's strip); just register us at the bottom edge.
                 self.win_bottom = self.display.rect.bottom as f64 / self.dpi;
-            } else {
+                self.win_h = self.display.rect.bottom as f64 / self.dpi - self.display.rect.top as f64 / self.dpi;
+            } else if self.cfg.dock_position == "bottom" {
                 // Ask Explorer where we actually sit (above any existing AppBar, e.g. the taskbar),
                 // then register that strip.
                 SHAppBarMessage(ABM_QUERYPOS, &mut d);
                 // capture the effective bottom BEFORE SETPOS, so the window is anchored to the
                 // reserved strip, not the full screen bottom.
+                self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            } else if self.cfg.dock_position == "left" || self.cfg.dock_position == "right" {
+                SHAppBarMessage(ABM_QUERYPOS, &mut d);
                 self.win_bottom = d.rc.bottom as f64 / self.dpi;
             }
             SHAppBarMessage(ABM_SETPOS, &mut d);
@@ -1096,15 +1130,27 @@ impl Dock {
     /// The window only needs to be as wide as a fully magnified dock plus room for the label.
     fn fit_window(&mut self) {
         let (b, gap) = (self.b(), self.gap());
-        // When hiding the Windows taskbar, span the whole bottom edge so the dock visually replaces it.
-        self.win_w = if self.cfg.hide_taskbar {
-            self.screen_w
-        } else {
-            self.screen_w.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
-        };
-        // The plate is the visible dock; the extra height above it is only the room magnified
-        // icons grow into (they rise above the plate and must not be clipped by the layered window).
-        self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 8.0;
+        match self.cfg.dock_position.as_str() {
+            "left" | "right" => {
+                // Vertical dock: width is just the plate width; height spans the screen edge to edge
+                // (replacing the taskbar strip when hiding it) or fits the magnified items.
+                self.win_w = self.plate_h();
+                self.win_h = if self.cfg.hide_taskbar {
+                    self.screen_h
+                } else {
+                    self.screen_h.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
+                };
+            }
+            _ => {
+                // Horizontal dock along the bottom edge.
+                self.win_w = if self.cfg.hide_taskbar {
+                    self.screen_w
+                } else {
+                    self.screen_w.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
+                };
+                self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 8.0;
+            }
+        }
     }
 
     // -------------------------------------------------------------- badges

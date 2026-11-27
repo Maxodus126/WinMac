@@ -67,6 +67,8 @@ pub struct Config {
     pub launchpad_style: String,
     /// Dock icon rendering: "default" | "dark" | "clear" | "tinted".
     pub icon_style: String,
+    /// Dock screen edge: "bottom", "left" or "right".
+    pub dock_position: String,
     /// Keys we don't know (written by a newer build) survive a save.
     extra: Map<String, Value>,
 }
@@ -155,6 +157,7 @@ impl Default for Config {
             language: "auto".into(),
             launchpad_style: "apps".into(),
             icon_style: "default".into(),
+            dock_position: "bottom".into(),
             extra: Map::new(),
         }
     }
@@ -223,6 +226,11 @@ impl Config {
         if let Some(s) = v.remove("IconStyle").and_then(|x| x.as_str().map(String::from)) {
             if ["default", "dark", "clear", "tinted"].contains(&s.as_str()) {
                 c.icon_style = s;
+            }
+        }
+        if let Some(s) = v.remove("DockPosition").and_then(|x| x.as_str().map(String::from)) {
+            if ["bottom", "left", "right"].contains(&s.as_str()) {
+                c.dock_position = s;
             }
         }
         if let Some(Value::Array(r)) = v.remove("Recent") {
@@ -317,6 +325,7 @@ impl Config {
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
             "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
@@ -410,6 +419,7 @@ impl Config {
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
             "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
