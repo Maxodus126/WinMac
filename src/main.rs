@@ -29,6 +29,7 @@ mod genie_gpu;
 mod gfx;
 mod menu;
 mod menubar;
+mod notification_center;
 mod power;
 mod shell;
 mod switcher;
@@ -241,6 +242,7 @@ impl App {
             menubar::Extra::Tray => Box::new(fly_tray::TrayFly::new()),
             menubar::Extra::Ai => Box::new(fly_ai::AiFly::new()),
             menubar::Extra::Calendar => Box::new(fly_cal::CalFly::new()),
+            menubar::Extra::NotificationCenter => Box::new(notification_center::NotificationCenter::new()),
             menubar::Extra::Settings => return self.open_settings(),
             menubar::Extra::Launchpad => self.all_apps(),
             menubar::Extra::Spotlight => Box::new(spotlight::Spotlight::new(!self.dock.config().reduce_motion)),
