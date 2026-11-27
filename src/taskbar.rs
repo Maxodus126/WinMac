@@ -15,7 +15,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
+    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOW,
 };
 
 const ABS_AUTOHIDE: isize = 1;
@@ -104,6 +104,11 @@ pub fn restore(force: bool) {
         let target = if hidden { ORIGINAL.get() } else { live & !ABS_AUTOHIDE };
         let mut d = data(main, target);
         SHAppBarMessage(ABM_SETSTATE, &mut d);
+        // SW_HIDE hid the bar window itself during hide(); make sure it is shown again so the
+        // taskbar actually comes back (ABM_SETSTATE alone does not un-hide a hidden window).
+        if IsWindowVisible(main).as_bool() == false {
+            let _ = ShowWindow(main, SW_SHOW);
+        }
     }
     HIDDEN.set(false);
 }

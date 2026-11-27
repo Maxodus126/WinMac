@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::flyout::{white, Cmd, Content, Ui, ACCENT, MARGIN};
@@ -54,6 +55,12 @@ pub struct Spotlight {
     changed: Option<Instant>,
     last_tick: Option<Instant>,
     motion: bool,
+    /// filesystem search runs off the UI thread; the worker drops (query, results) here
+    files_job: Arc<Mutex<Option<(String, Vec<FileHit>)>>>,
+    /// the query whose files we are waiting for (None = no search pending)
+    files_pending: Option<String>,
+    /// hwnd of the flyout window, so the worker can post WM_FLY_DATA when results land
+    hwnd: isize,
 }
 
 /// %-encode a search for a URL.
@@ -280,7 +287,7 @@ impl Spotlight {
     }
 
     fn empty(apps: Vec<App>, motion: bool) -> Spotlight {
-        Spotlight { apps, query: String::new(), hits: Vec::new(), files: Vec::new(), calc: None, sel: 0, h: BAR, blink: Instant::now(), changed: None, last_tick: None, motion }
+        Spotlight { apps, query: String::new(), hits: Vec::new(), files: Vec::new(), calc: None, sel: 0, h: BAR, blink: Instant::now(), changed: None, last_tick: None, motion, files_job: Arc::new(Mutex::new(None)), files_pending: None, hwnd: 0 }
     }
 
     fn pick_up(&mut self) {
@@ -291,17 +298,54 @@ impl Spotlight {
     fn filter(&mut self) {
         let q = self.query.trim().to_lowercase();
         self.hits.clear();
-        self.files.clear();
         self.calc = None;
         if !q.is_empty() {
             let mut hits: Vec<(u8, usize, usize)> =
                 self.apps.iter().enumerate().filter_map(|(i, a)| rank(&a.name.to_lowercase(), &q).map(|r| (r, a.name.len(), i))).collect();
             hits.sort();
             self.hits = hits.into_iter().map(|h| h.2).take(MAX_APPS).collect();
-            self.files = if NO_FS.load(Ordering::Relaxed) { Vec::new() } else { find_files(&q) };
             self.calc = eval_calc(&q);
+            // kick off an off-thread filesystem search; results land via data()
+            if !NO_FS.load(Ordering::Relaxed) {
+                if self.files_pending.as_deref() != Some(&q) {
+                    let job = self.files_job.clone();
+                    let q2 = q.clone();
+                    let hwnd = self.hwnd;
+                    std::thread::spawn(move || {
+                        let res = find_files(&q2);
+                        *job.lock().unwrap_or_else(|p| p.into_inner()) = Some((q2, res));
+                        if hwnd != 0 {
+                            unsafe {
+                                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                    windows::Win32::Foundation::HWND(hwnd as *mut _),
+                                    crate::flyout::WM_FLY_DATA,
+                                    windows::Win32::Foundation::WPARAM(0),
+                                    windows::Win32::Foundation::LPARAM(0),
+                                );
+                            }
+                        }
+                    });
+                }
+                self.files_pending = Some(q.clone());
+            } else {
+                self.files_pending = None;
+            }
+        } else {
+            self.files.clear();
+            self.files_pending = None;
         }
         self.sel = self.sel.min(self.rows().saturating_sub(1));
+    }
+
+    /// Pick up results from a finished filesystem worker thread (called on WM_FLY_DATA / data()).
+    fn pick_up_files(&mut self) {
+        if let Some((q, res)) = self.files_job.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            if self.files_pending.as_deref() == Some(q.as_str()) && self.query.trim().to_lowercase() == q {
+                self.files = res;
+                self.sel = self.sel.min(self.rows().saturating_sub(1));
+                self.files_pending = None;
+            }
+        }
     }
 
     /// Rows under the field: the apps, files/folders, a calculator result, then the web search
@@ -488,6 +532,7 @@ impl Content for Spotlight {
 
     fn opened(&mut self, hwnd: isize) {
         NOTIFY.store(hwnd, Ordering::Relaxed);
+        self.hwnd = hwnd;
     }
 
     fn closing(&mut self) {
@@ -495,7 +540,7 @@ impl Content for Spotlight {
     }
 
     fn data(&mut self) {
-        self.pick_up();
+        self.pick_up_files();
     }
 
     fn draw(&mut self, ui: &mut Ui) -> f32 {

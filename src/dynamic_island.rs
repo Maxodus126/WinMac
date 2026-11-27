@@ -10,7 +10,7 @@ use windows::Media::Control::{
 };
 use windows::Storage::Streams::DataReader;
 
-use crate::flyout::{white, Cmd, Content, Ui};
+use crate::flyout::{white, Cmd, Content, Ui, WM_FLY_DATA};
 
 const W: f32 = 460.0;
 const H: f32 = 84.0;
@@ -69,11 +69,37 @@ fn read_media() -> Option<Media> {
 pub struct DynamicIsland {
     media: Option<Media>,
     hwnd: isize,
+    /// a media read is already running on a worker (don't stack them)
+    reading: bool,
+    /// shared slot the worker fills; data() picks it up
+    slot: std::sync::Arc<std::sync::Mutex<Option<Option<Media>>>>,
 }
 
 impl DynamicIsland {
     pub fn new() -> DynamicIsland {
-        DynamicIsland { media: None, hwnd: 0 }
+        DynamicIsland { media: None, hwnd: 0, reading: false, slot: std::sync::Arc::new(std::sync::Mutex::new(None)) }
+    }
+
+    /// Read the current media on a worker thread and post WM_FLY_DATA when done (keeps the UI
+    /// thread free of the blocking WinRT `.get()` calls).
+    fn kick_read(&mut self) {
+        if self.reading || self.hwnd == 0 {
+            return;
+        }
+        self.reading = true;
+        let slot = self.slot.clone();
+        let hwnd = self.hwnd;
+        std::thread::spawn(move || {
+            let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
+            let m = read_media();
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(m);
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    windows::Win32::Foundation::HWND(hwnd as *mut _), WM_FLY_DATA,
+                    windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0),
+                );
+            }
+        });
     }
 
     fn media_cmd(&self, id: u32) {
@@ -107,12 +133,17 @@ impl Content for DynamicIsland {
 
     fn opened(&mut self, hwnd: isize) {
         self.hwnd = hwnd;
-        self.media = read_media();
+        self.kick_read();
     }
 
     fn tick(&mut self) {
-        if let Some(m) = read_media() {
-            self.media = Some(m);
+        self.kick_read();
+    }
+
+    fn data(&mut self) {
+        self.reading = false;
+        if let Some(m) = self.slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            self.media = m;
         }
     }
 

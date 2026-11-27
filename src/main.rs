@@ -677,13 +677,11 @@ fn foreground_fullscreen_rect() -> Option<RECT> {
             right: GetSystemMetrics(SM_CXSCREEN),
             bottom: GetSystemMetrics(SM_CYSCREEN),
         };
-        // work area (monitor minus AppBars, e.g. the dock's own strip)
-        let mut work = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        if SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut work as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)).is_err() {
-            return None;
-        }
         let covers = |r: &RECT, target: &RECT| r.left <= target.left && r.top <= target.top && r.right >= target.right && r.bottom >= target.bottom;
-        if covers(&r, &screen) || covers(&r, &work) {
+        // Only a true fullscreen window covers the entire monitor (including the dock's reserved strip).
+        // A merely maximized bordered window covers only the work area (below the dock strip) — we keep
+        // the dock visible on top of it.
+        if covers(&r, &screen) {
             Some(r)
         } else {
             None
