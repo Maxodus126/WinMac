@@ -14,6 +14,8 @@ pub struct Config {
     pub icon_tiles: bool,
     /// Slide the dock away until the pointer touches the bottom edge (no space reserved for it).
     pub auto_hide: bool,
+    /// When auto-hiding, also hide whenever a foreground window covers the dock (macOS-style smart hide).
+    pub smart_hide: bool,
     /// Red unread badges from window titles and Action Center toasts.
     pub badges: bool,
     /// Host the notification-area icons behind a ^ item in the menu bar.
@@ -63,6 +65,10 @@ pub struct Config {
     pub language: String,
     /// All apps: "apps" (the macOS 26 Apps window, the default) or "classic" (the full-screen Launchpad).
     pub launchpad_style: String,
+    /// Dock icon rendering: "default" | "dark" | "clear" | "tinted".
+    pub icon_style: String,
+    /// Dock screen edge: "bottom", "left" or "right".
+    pub dock_position: String,
     /// Keys we don't know (written by a newer build) survive a save.
     extra: Map<String, Value>,
 }
@@ -118,13 +124,14 @@ impl Default for Config {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            icon_size: 52.0,
+            icon_size: 40.0,
             magnify: 1.75,
             hide_taskbar: true,
             menu_bar: true,
             genie: true,
             icon_tiles: true,
             auto_hide: false,
+            smart_hide: false,
             badges: true,
             tray_icons: true,
             ai_usage: true,
@@ -149,6 +156,8 @@ impl Default for Config {
             reduce_motion: false,
             language: "auto".into(),
             launchpad_style: "apps".into(),
+            icon_style: "default".into(),
+            dock_position: "bottom".into(),
             extra: Map::new(),
         }
     }
@@ -182,6 +191,7 @@ impl Config {
         b("Genie", &mut c.genie);
         b("IconTiles", &mut c.icon_tiles);
         b("AutoHide", &mut c.auto_hide);
+        b("SmartHide", &mut c.smart_hide);
         b("Badges", &mut c.badges);
         b("TrayIcons", &mut c.tray_icons);
         b("AiUsage", &mut c.ai_usage);
@@ -211,6 +221,16 @@ impl Config {
         if let Some(l) = v.remove("LaunchpadStyle").and_then(|x| x.as_str().map(String::from)) {
             if ["apps", "classic"].contains(&l.as_str()) {
                 c.launchpad_style = l;
+            }
+        }
+        if let Some(s) = v.remove("IconStyle").and_then(|x| x.as_str().map(String::from)) {
+            if ["default", "dark", "clear", "tinted"].contains(&s.as_str()) {
+                c.icon_style = s;
+            }
+        }
+        if let Some(s) = v.remove("DockPosition").and_then(|x| x.as_str().map(String::from)) {
+            if ["bottom", "left", "right"].contains(&s.as_str()) {
+                c.dock_position = s;
             }
         }
         if let Some(Value::Array(r)) = v.remove("Recent") {
@@ -279,6 +299,7 @@ impl Config {
             "Genie": self.genie,
             "IconTiles": self.icon_tiles,
             "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
             "Badges": self.badges,
             "TrayIcons": self.tray_icons,
             "AiUsage": self.ai_usage,
@@ -303,6 +324,8 @@ impl Config {
             "ReduceMotion": self.reduce_motion,
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
@@ -370,6 +393,7 @@ impl Config {
             "Genie": self.genie,
             "IconTiles": self.icon_tiles,
             "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
             "Badges": self.badges,
             "TrayIcons": self.tray_icons,
             "AiUsage": self.ai_usage,
@@ -394,6 +418,8 @@ impl Config {
             "ReduceMotion": self.reduce_motion,
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
         });
         if let Value::Object(f) = fields {
             m.extend(f);

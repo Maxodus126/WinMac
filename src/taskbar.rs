@@ -14,7 +14,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
+    FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
 };
 
 const ABS_AUTOHIDE: isize = 1;
@@ -52,7 +52,8 @@ pub fn explorer_pid() -> Option<u32> {
     (pid != 0).then_some(pid)
 }
 
-/// Hide the Windows taskbar via ABM_SETSTATE autohide.
+/// Hide the Windows taskbar: set ABM_SETSTATE autohide (so Explorer keeps a sensible work area) and
+/// also hide the bar window itself, so it does not peek up out of the dock's strip.
 pub fn hide() {
     let Some(main) = main_bar() else { return };
     unsafe {
@@ -64,6 +65,9 @@ pub fn hide() {
         if state & ABS_AUTOHIDE == 0 {
             let mut d = data(main, state | ABS_AUTOHIDE);
             SHAppBarMessage(ABM_SETSTATE, &mut d);
+        }
+        if IsWindowVisible(main).as_bool() {
+            let _ = ShowWindow(main, SW_HIDE);
         }
     }
     HIDDEN.set(true);
@@ -111,6 +115,9 @@ unsafe extern "system" fn on_show(_: HWINEVENTHOOK, _: u32, h: HWND, obj: i32, _
         if state & ABS_AUTOHIDE == 0 {
             let mut d = data(main, state | ABS_AUTOHIDE);
             SHAppBarMessage(ABM_SETSTATE, &mut d);
+        }
+        if IsWindowVisible(main).as_bool() {
+            let _ = ShowWindow(main, SW_HIDE);
         }
     }
 }

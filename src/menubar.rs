@@ -81,6 +81,8 @@ pub enum Extra {
     Wifi,
     ControlCenter,
     Calendar,
+    NotificationCenter,
+    DynamicIsland,
     Settings,
     Launchpad,
     Spotlight,
@@ -110,6 +112,8 @@ enum Item {
     Apps,
     Search,
     Cc,
+    Bell,
+    Island,
     Clock,
 }
 
@@ -667,7 +671,7 @@ impl MenuBar {
     pub fn set_open_extra(&mut self, e: Option<Extra>) {
         let want = e.and_then(|e| {
             self.slots.iter().position(|s| {
-                matches!((s.item, e), (Item::Chevron, Extra::Tray) | (Item::Ai, Extra::Ai) | (Item::Battery, Extra::Battery) | (Item::Net, Extra::Wifi) | (Item::Cc, Extra::ControlCenter) | (Item::Clock, Extra::Calendar) | (Item::Apps, Extra::Launchpad) | (Item::Search, Extra::Spotlight))
+                matches!((s.item, e), (Item::Chevron, Extra::Tray) | (Item::Ai, Extra::Ai) | (Item::Battery, Extra::Battery) | (Item::Net, Extra::Wifi) | (Item::Cc, Extra::ControlCenter) | (Item::Clock, Extra::Calendar) | (Item::Bell, Extra::NotificationCenter) | (Item::Island, Extra::DynamicIsland) | (Item::Apps, Extra::Launchpad) | (Item::Search, Extra::Spotlight))
             })
         });
         if want != self.open {
@@ -686,6 +690,8 @@ impl MenuBar {
             Extra::Wifi => Item::Net,
             Extra::ControlCenter => Item::Cc,
             Extra::Calendar => Item::Clock,
+            Extra::NotificationCenter => Item::Bell,
+            Extra::DynamicIsland => Item::Island,
             Extra::Settings => Item::Logo,
             Extra::Launchpad => Item::Apps,
             Extra::Spotlight => Item::Search,
@@ -719,6 +725,8 @@ impl MenuBar {
             Item::Search => return Some(BarAct::Flyout(Extra::Spotlight, l, r)),
             Item::Apps => return Some(BarAct::Flyout(Extra::Launchpad, l, r)),
             Item::Clock => return Some(BarAct::Flyout(Extra::Calendar, l, r)),
+            Item::Bell => return Some(BarAct::Flyout(Extra::NotificationCenter, l, r)),
+            Item::Island => return Some(BarAct::Flyout(Extra::DynamicIsland, l, r)),
         }
     }
 
@@ -971,6 +979,8 @@ Open the download page?")) {
             Item::Search => self.text_w("\u{E721}", self.glyph_font(GLYPH_PX)),
             Item::Apps => self.text_w("\u{F0E2}", self.glyph_font(GLYPH_PX)),
             Item::Cc => 17.0,
+            Item::Bell => self.text_w("\u{E7F4}", self.glyph_font(GLYPH_PX)),
+            Item::Island => self.text_w("\u{E734}", self.glyph_font(GLYPH_PX)),
             Item::Clock => self.text_w(&self.clock, self.font(400)),
         }
     }
@@ -993,7 +1003,7 @@ Open the download page?")) {
         if self.battery.is_some() {
             right.push(Item::Battery);
         }
-        right.extend([Item::Net, Item::Apps, Item::Search, Item::Cc, Item::Clock]);
+        right.extend([Item::Net, Item::Apps, Item::Search, Item::Cc, Item::Bell, Item::Island, Item::Clock]);
         let mut x = self.screen_w - SIDE;
         for it in right.into_iter().rev() {
             let w = self.content_w(it) + PAD_X * 2.0;
@@ -1077,6 +1087,8 @@ Open the download page?")) {
                 Item::Search => self.draw_text(&mut content, "\u{E721}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Apps => self.draw_text(&mut content, "\u{F0E2}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Cc => draw_cc(&mut content, cx, mid, dpi),
+                Item::Bell => self.draw_text(&mut content, "\u{E7F4}", self.glyph_font(GLYPH_PX), cx, mid),
+                Item::Island => self.draw_text(&mut content, "\u{E734}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Clock => self.draw_text(&mut content, &self.clock, self.font(400), cx, mid),
             }
         }
