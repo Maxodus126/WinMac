@@ -553,6 +553,11 @@ impl Dock {
 
     // -------------------------------------------------------------- auto-hide
 
+    /// The dock is not hidden for fullscreen (i.e. it is safe to (re)register its AppBar strip).
+    pub fn is_visible(&self) -> bool {
+        !self.hidden
+    }
+
     pub fn auto_hide(&self) -> bool {
         self.cfg.auto_hide
     }
@@ -633,7 +638,10 @@ impl Dock {
                 self.unreserve();
                 SetTimer(self.hwnd, TIMER_EDGE, 60, None);
             } else {
-                self.reserve();
+                // not while hidden for fullscreen; the strip is re-claimed when fullscreen exits
+                if !self.hidden {
+                    self.reserve();
+                }
                 let _ = KillTimer(self.hwnd, TIMER_EDGE);
             }
         }
@@ -999,7 +1007,10 @@ impl Dock {
         let next = if b >= self.cfg.icon_size { f64::MAX } else { b.floor() };
         if next != self.fit_b {
             self.fit_b = next;
-            if !self.cfg.auto_hide {
+            // not while hidden for fullscreen: apply_display -> fit_icons runs on WM_DISPLAYCHANGE,
+            // which is broadcast to hidden windows too, and a reserve here would shrink the work area
+            // under the fullscreen app again
+            if !self.cfg.auto_hide && !self.hidden {
                 self.reserve(); // the plate got shorter or taller
             }
             for it in &mut self.items {

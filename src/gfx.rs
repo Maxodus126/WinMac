@@ -85,6 +85,14 @@ impl Surface {
 
     /// [`present_part`](Self::present_part) with an overall alpha (the genie dissolve fade).
     pub fn present_part_alpha(&self, hwnd: HWND, dst: (i32, i32), src: (i32, i32), w: i32, h: i32, alpha: u8) {
+        // Clamp the source rect into the DIB: UpdateLayeredWindow reads the source memory, so an
+        // out-of-bounds rect would read past the heap buffer (reachable from genie when the mesh
+        // bounding box collapses onto the surface edge and bw/bh are coerced to >=1).
+        let w = w.min((self.w as i32 - src.0).max(0));
+        let h = h.min((self.h as i32 - src.1).max(0));
+        if w <= 0 || h <= 0 {
+            return;
+        }
         unsafe {
             let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, SourceConstantAlpha: alpha, AlphaFormat: AC_SRC_ALPHA as u8, ..Default::default() };
             let pos = POINT { x: dst.0, y: dst.1 };
