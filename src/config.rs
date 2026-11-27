@@ -122,7 +122,7 @@ impl Default for Config {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            icon_size: 52.0,
+            icon_size: 40.0,
             magnify: 1.75,
             hide_taskbar: true,
             menu_bar: true,
