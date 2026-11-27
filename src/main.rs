@@ -657,11 +657,19 @@ fn foreground_fullscreen_rect() -> Option<RECT> {
         if ["Progman", "WorkerW", "Shell_TrayWnd"].contains(&cls.as_str()) {
             return None;
         }
-        // Fullscreen detection: a real fullscreen app (borderless-windowed or exclusive) covers either the
-        // whole monitor or the whole work area. Chrome/Edge keep WS_MAXIMIZE when they go fullscreen (F11,
-        // YouTube) — only the caption goes — so we do NOT reject WS_CAPTION here; instead we check geometry.
+        // Fullscreen detection: a real fullscreen app covers either the whole monitor or the whole work
+        // area. Chrome/Edge keep WS_MAXIMIZE when they go fullscreen (F11, YouTube) — only the caption
+        // goes — so we check geometry rather than rejecting WS_CAPTION outright. But a bordered window
+        // that is merely maximized keeps its caption and decorations, so it is not truly fullscreen:
+        // the dock stays on top.
         let mut r = RECT::default();
         if GetWindowRect(fg, &mut r).is_err() {
+            return None;
+        }
+        let has_caption = GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION.0 as isize == WS_CAPTION.0 as isize;
+        let maximized = GetWindowLongPtrW(fg, GWL_STYLE) & WS_MAXIMIZE.0 as isize == WS_MAXIMIZE.0 as isize;
+        if maximized && has_caption {
+            // Maximized bordered window: covers the work area but is not truly fullscreen.
             return None;
         }
         let screen = RECT {
