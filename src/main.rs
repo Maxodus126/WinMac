@@ -10,6 +10,7 @@ mod badges;
 mod config;
 mod dock;
 mod dropfiles;
+mod dynamic_island;
 mod ai_usage;
 mod apps;
 mod spotlight;
@@ -243,6 +244,7 @@ impl App {
             menubar::Extra::Ai => Box::new(fly_ai::AiFly::new()),
             menubar::Extra::Calendar => Box::new(fly_cal::CalFly::new()),
             menubar::Extra::NotificationCenter => Box::new(notification_center::NotificationCenter::new()),
+            menubar::Extra::DynamicIsland => Box::new(dynamic_island::DynamicIsland::new()),
             menubar::Extra::Settings => return self.open_settings(),
             menubar::Extra::Launchpad => self.all_apps(),
             menubar::Extra::Spotlight => Box::new(spotlight::Spotlight::new(!self.dock.config().reduce_motion)),
