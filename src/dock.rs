@@ -657,6 +657,27 @@ impl Dock {
         self.display.at_bottom(p)
     }
 
+    /// True when a foreground (non-ours) window's rect overlaps the dock's screen area. Smart-hide
+    /// uses this to keep the dock away while a window covers it.
+    fn covered_by_window(&self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.0.is_null() || crate::shell::window_pid(fg) == std::process::id() {
+                return false;
+            }
+            let mut r = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(fg, &mut r).is_err() {
+                return false;
+            }
+            let dx = (self.win_x() * self.dpi) as i32;
+            let dy = ((self.win_bottom - self.win_h) * self.dpi) as i32;
+            let dw = (self.win_w * self.dpi) as i32;
+            let dh = (self.win_h * self.dpi) as i32;
+            !(r.right <= dx || r.left >= dx + dw || r.bottom <= dy || r.top >= dy + dh)
+        }
+    }
+
     /// Show the dock for a moment even when hidden: a genie aiming at it, an app asking for attention.
     pub fn peek(&mut self, seconds: f64) {
         if !self.cfg.auto_hide {
@@ -1672,11 +1693,14 @@ impl Dock {
 
         let kh = self.cfg.ease(dt, 13.0, self.cfg.hide_speed);
         if self.cfg.auto_hide {
+            let covered = self.cfg.smart_hide && self.covered_by_window();
             if hovering || self.dragging || self.pressed.is_some() || self.at_bottom_edge() {
                 self.last_near = now;
             }
-            // linger a moment after the pointer leaves, like macOS
-            let show = now < self.peek_until || now_secs(now, self.last_near) < self.cfg.hide_delay_ms / 1000.0;
+            // linger a moment after the pointer leaves, like macOS; smart hide keeps it away while a
+            // window covers the dock (the pointer can't reach it anyway)
+            let near = now < self.peek_until || now_secs(now, self.last_near) < self.cfg.hide_delay_ms / 1000.0;
+            let show = near && !covered;
             self.hide = approach(self.hide, if show { 0.0 } else { 1.0 }, kh);
         } else {
             self.hide = approach(self.hide, 0.0, kh);

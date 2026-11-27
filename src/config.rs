@@ -14,6 +14,8 @@ pub struct Config {
     pub icon_tiles: bool,
     /// Slide the dock away until the pointer touches the bottom edge (no space reserved for it).
     pub auto_hide: bool,
+    /// When auto-hiding, also hide whenever a foreground window covers the dock (macOS-style smart hide).
+    pub smart_hide: bool,
     /// Red unread badges from window titles and Action Center toasts.
     pub badges: bool,
     /// Host the notification-area icons behind a ^ item in the menu bar.
@@ -127,6 +129,7 @@ impl Default for Config {
             genie: true,
             icon_tiles: true,
             auto_hide: false,
+            smart_hide: false,
             badges: true,
             tray_icons: true,
             ai_usage: true,
@@ -185,6 +188,7 @@ impl Config {
         b("Genie", &mut c.genie);
         b("IconTiles", &mut c.icon_tiles);
         b("AutoHide", &mut c.auto_hide);
+        b("SmartHide", &mut c.smart_hide);
         b("Badges", &mut c.badges);
         b("TrayIcons", &mut c.tray_icons);
         b("AiUsage", &mut c.ai_usage);
@@ -287,6 +291,7 @@ impl Config {
             "Genie": self.genie,
             "IconTiles": self.icon_tiles,
             "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
             "Badges": self.badges,
             "TrayIcons": self.tray_icons,
             "AiUsage": self.ai_usage,
@@ -379,6 +384,7 @@ impl Config {
             "Genie": self.genie,
             "IconTiles": self.icon_tiles,
             "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
             "Badges": self.badges,
             "TrayIcons": self.tray_icons,
             "AiUsage": self.ai_usage,
