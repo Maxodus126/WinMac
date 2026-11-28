@@ -14,13 +14,11 @@ Written from scratch in Rust on plain Win32 — no Windhawk, no Explorer patchin
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-CE422B?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Website](https://img.shields.io/badge/Website-maxodus126.github.io-6E4FB8?style=for-the-badge&logo=github&logoColor=white)](https://maxodus126.github.io/WinMac/)
 
-<img src="docs/film.webp" alt="WIN MAC running on Windows 11 — dock magnification, genie minimize, battery & Control Center flyouts" width="100%">
-
-<sub>Every frame above is from one screen recording. Full quality: <a href="docs/macdock.mp4">docs/macdock.mp4</a></sub>
+*Media placeholder — screenshots and video will be added here.*
 
 <br>
 
-**[Download for Windows 11](https://github.com/Maxodus126/WinMac/releases/latest) · [View Website](https://maxodus126.github.io/WinMac/) · [Built from source](#build-from-source)**
+**[Download for Windows 11](https://github.com/Maxodus126/WinMac/releases/latest) · [Install guide](INSTALL.md) · [View Website](https://maxodus126.github.io/WinMac/) · [Built from source](#build-from-source)**
 
 </div>
 
@@ -32,26 +30,13 @@ WIN MAC replaces the Windows 11 taskbar with a **Liquid Glass dock** and a **mac
 
 **Highlights:** cosine-falloff icon magnification · genie minimize · real window capture behind the glass · Spotlight (Alt+Space) · macOS-style Alt+Tab · Control Center · battery power metrics · desktop widgets · live AI usage for Claude Code & Codex — all in a ~1 MB native executable using **0% CPU at idle**.
 
-### Before and after
-
-<table>
-<tr>
-<td width="50%"><img src="docs/before.jpg" alt="Stock Windows 11 desktop"></td>
-<td width="50%"><img src="docs/after.jpg" alt="WIN MAC: menu bar, desktop widgets, Liquid Glass dock"></td>
-</tr>
-<tr>
-<td align="center"><sub>Windows 11, stock taskbar</sub></td>
-<td align="center"><sub>WIN MAC, same laptop a minute later</sub></td>
-</tr>
-</table>
-
 ---
 
 ## Features
 
 ### The dock
 
-<img src="docs/dock-glass.jpg" alt="The Liquid Glass dock with pinned apps, badges, recents and Trash" width="100%">
+*Screenshot coming soon — will be added.*
 
 - **Magnification** that follows the pointer (cosine falloff, smoothed per frame)
 - **Genie** minimize into the app icon — and back out on restore
@@ -65,7 +50,7 @@ WIN MAC replaces the Windows 11 taskbar with a **Liquid Glass dock** and a **mac
 
 ### The genie
 
-<img src="docs/genie.png" alt="A VS Code window bending into its dock icon mid-minimize" width="100%">
+*Screenshot coming soon — will be added.*
 
 The window is snapshotted and drawn as a 48-row mesh by WIN MAC's own scanline rasterizer (bilinear, anti-aliased, rows split across threads), then poured into its icon. Restore plays it backwards. Windows' own minimize animation is disabled while WIN MAC runs.
 
@@ -73,12 +58,12 @@ The window is snapshotted and drawn as a 48-row mesh by WIN MAC's own scanline r
 
 - Front app in bold with **File / Edit / View / Window / Help** menus sending real shortcuts (Ctrl+S, Ctrl+Z…)
 - Battery, Wi-Fi, **Spotlight** (Alt+Space), Control Center and a clock with a **calendar**
-- System menu: Auto Hide Dock, Quit, Check for Updates (only `api.github.com`; nothing auto-downloads; a blue dot marks new releases)
+- System menu: Auto Hide Dock, Quit, Check for Updates (only `api.github.com`; a blue dot marks new releases — choosing to update downloads and verifies the new build, then installs it and restarts)
 - **Control Center:** Wi-Fi/Bluetooth, Dark Mode, Windows power mode, brightness, volume, now-playing, and a `^` tray host
 - **Battery flyout** with real numbers: charge, wear, cycles, CPU package power (RAPL), NVIDIA GPU power (NVML) and rest
-- **AI usage** for Claude Code & Codex: ring of the nearest limit, tok/s burn rate, 5/30-min and 24h charts, per-session details — read from local logs, no telemetry by default
+- **AI usage** for Claude Code & Codex: ring of the nearest limit, tok/s burn rate, 5/30-min and 24h charts, per-session details — read from local logs, no telemetry by default. Update checks hit the GitHub API and can be disabled in Settings (see [Privacy](INSTALL.md#kebijakan-privasi-ringkas)).
 
-<img src="docs/control-center.png" alt="Control Center flyout" width="100%">
+*Screenshot coming soon — will be added.*
 
 ### Apps window, Spotlight & Alt+Tab
 
@@ -86,11 +71,11 @@ The window is snapshotted and drawn as a 48-row mesh by WIN MAC's own scanline r
 - **Spotlight** — a glass capsule that grows into results as you type (apps first, then web search)
 - **Alt+Tab like Cmd+Tab** — one icon per app, most-recent-first, dark frosted panel; quick tap flips to the previous app; Esc cancels, Q quits, H minimizes
 
-<img src="docs/switcher.jpg" alt="The Alt+Tab switcher" width="100%">
+*Screenshot coming soon — will be added.*
 
 ### Desktop widgets
 
-<img src="docs/widgets.jpg" alt="Desktop widgets: analog clock, date, battery ring, CPU/memory/disk bars" width="100%">
+*Screenshot coming soon — will be added.*
 
 Four frosted macOS-style widgets top-right: analog clock, date, battery ring and system meters. They live under every window, redraw every 5 s only when a value changed, and click through to Clock, Calendar, battery settings or Task Manager.
 
@@ -146,9 +131,9 @@ Settings live in `%APPDATA%\WinMac\config.json`, created on first run. The Setti
 | `Genie` / `GenieDuration` | `true` / `560` | Genie animation and length (ms) |
 | `IconTiles` / `Badges` | `true` / `true` | Squircle tiles / unread badges |
 | `MenuBar` / `TrayIcons` | `true` / `true` | Menu bar / `^` tray host |
-| `HideTaskbar` | `true` | Hide the Windows taskbar while WIN MAC runs |
+| `HideTaskbar` | `true` | Cover the Windows taskbar with the dock while WIN MAC runs |
 | `DesktopWidgets` / `DownloadsStack` / `ShowRecents` | `true` | Widgets, Downloads stack, last-3 recents |
-| `AppSwitcher` | `true` | macOS-style Alt+Tab (off = Windows switcher) |
+| `AppSwitcher` | `false` | macOS-style Alt+Tab (off = Windows switcher) |
 | `IconOverrides` | `{}` | Per-item custom icons (right-click → Change Icon…) |
 | `AiUsage` | `true` | Claude Code / Codex usage item |
 | `ClaudeUsageOAuth` / `ClaudeLimit5h` | `false` / `null` | Real Anthropic limits via local login, or a local-token estimate |

@@ -14,6 +14,8 @@ pub struct Config {
     pub icon_tiles: bool,
     /// Slide the dock away until the pointer touches the bottom edge (no space reserved for it).
     pub auto_hide: bool,
+    /// When auto-hiding, also hide whenever a foreground window covers the dock (macOS-style smart hide).
+    pub smart_hide: bool,
     /// Red unread badges from window titles and Action Center toasts.
     pub badges: bool,
     /// Host the notification-area icons behind a ^ item in the menu bar.
@@ -36,8 +38,19 @@ pub struct Config {
     pub battery_percent: bool,
     /// macOS-style widgets on the desktop (clock, date, battery, system).
     pub desktop_widgets: bool,
+    /// Show a dock on secondary monitors, in addition to the primary monitor.
+    pub secondary_docks: bool,
+    /// Desktop widget items in 4 slots: "clock", "digital_clock", "date", "battery", "system", "none".
+    pub widget_items: Vec<String>,
+    /// Widget screen position: "top-right", "top-left", "bottom-right", "bottom-left", "custom".
+    pub widget_position: String,
+    /// Custom widget offset (X, Y) in screen coordinates when dragged freely.
+    pub widget_offset: Option<(i32, i32)>,
     /// macOS-style Alt+Tab: one icon per app in a frosted panel (replaces the Windows switcher).
     pub app_switcher: bool,
+    /// Check GitHub for new releases at startup and periodically (a small phone-home to the GitHub API).
+    /// Off disables the updater entirely.
+    pub check_updates: bool,
     /// How long the Genie minimize takes, in ms (restoring takes a little less).
     pub genie_ms: f64,
     /// Multiplier on how fast icons grow and shrink under the pointer.
@@ -52,6 +65,15 @@ pub struct Config {
     pub language: String,
     /// All apps: "apps" (the macOS 26 Apps window, the default) or "classic" (the full-screen Launchpad).
     pub launchpad_style: String,
+    /// Dock icon rendering: "default" | "dark" | "clear" | "tinted".
+    pub icon_style: String,
+    /// Dock screen edge: "bottom", "left" or "right".
+    pub dock_position: String,
+    /// Extra frosted-glass tint over the dock plate ("#RRGGBB", "" = none) and its opacity in 0..1.
+    pub glass_tint: String,
+    pub glass_opacity: f64,
+    /// Draw the dock plate's drop shadow (off removes any shadow band bleeding over app windows).
+    pub dock_shadow: bool,
     /// Keys we don't know (written by a newer build) survive a save.
     extra: Map<String, Value>,
 }
@@ -107,13 +129,14 @@ impl Default for Config {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            icon_size: 52.0,
+            icon_size: 40.0,
             magnify: 1.75,
             hide_taskbar: true,
             menu_bar: true,
             genie: true,
             icon_tiles: true,
             auto_hide: false,
+            smart_hide: false,
             badges: true,
             tray_icons: true,
             ai_usage: true,
@@ -124,7 +147,12 @@ impl Default for Config {
             show_recents: true,
             downloads_stack: true,
             desktop_widgets: true,
+            secondary_docks: true,
+            widget_items: vec!["clock".into(), "date".into(), "battery".into(), "system".into()],
+            widget_position: "top-right".into(),
+            widget_offset: None,
             app_switcher: true,
+            check_updates: true,
             battery_percent: false,
             genie_ms: 560.0,
             magnify_speed: 1.0,
@@ -133,8 +161,23 @@ impl Default for Config {
             reduce_motion: false,
             language: "auto".into(),
             launchpad_style: "apps".into(),
+            icon_style: "default".into(),
+            dock_position: "bottom".into(),
+            glass_tint: String::new(),
+            glass_opacity: 0.0,
+            dock_shadow: true,
             extra: Map::new(),
         }
+    }
+}
+
+/// Write config.json through a temporary file and a rename, so a crash or power cut mid-write never leaves a
+/// half-written file (which the next start would read as no config at all).
+fn write_atomic(s: &str) {
+    let tmp = format!("{}.tmp", path());
+    if std::fs::write(&tmp, s).is_ok() && std::fs::rename(&tmp, path()).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::write(path(), s);
     }
 }
 
@@ -156,6 +199,7 @@ impl Config {
         b("Genie", &mut c.genie);
         b("IconTiles", &mut c.icon_tiles);
         b("AutoHide", &mut c.auto_hide);
+        b("SmartHide", &mut c.smart_hide);
         b("Badges", &mut c.badges);
         b("TrayIcons", &mut c.tray_icons);
         b("AiUsage", &mut c.ai_usage);
@@ -164,8 +208,11 @@ impl Config {
         b("DownloadsStack", &mut c.downloads_stack);
         b("BatteryPercent", &mut c.battery_percent);
         b("DesktopWidgets", &mut c.desktop_widgets);
+        b("SecondaryDocks", &mut c.secondary_docks);
         b("AppSwitcher", &mut c.app_switcher);
+        b("CheckUpdates", &mut c.check_updates);
         b("ReduceMotion", &mut c.reduce_motion);
+        b("DockShadow", &mut c.dock_shadow);
         let mut f = |k: &str, d: &mut f64, lo: f64, hi: f64| {
             if let Some(x) = v.remove(k).and_then(|x| x.as_f64()) {
                 *d = x.clamp(lo, hi);
@@ -175,6 +222,10 @@ impl Config {
         f("MagnifySpeed", &mut c.magnify_speed, SPEED.0, SPEED.1);
         f("AutoHideDelay", &mut c.hide_delay_ms, HIDE_DELAY_MS.0, HIDE_DELAY_MS.1);
         f("AutoHideSpeed", &mut c.hide_speed, SPEED.0, SPEED.1);
+        f("GlassOpacity", &mut c.glass_opacity, 0.0, 1.0);
+        if let Some(s) = v.remove("GlassTint").and_then(|x| x.as_str().map(String::from)) {
+            c.glass_tint = s;
+        }
         if let Some(l) = v.remove("Language").and_then(|x| x.as_str().map(String::from)) {
             if ["auto", "en", "id"].contains(&l.as_str()) {
                 c.language = l;
@@ -183,6 +234,16 @@ impl Config {
         if let Some(l) = v.remove("LaunchpadStyle").and_then(|x| x.as_str().map(String::from)) {
             if ["apps", "classic"].contains(&l.as_str()) {
                 c.launchpad_style = l;
+            }
+        }
+        if let Some(s) = v.remove("IconStyle").and_then(|x| x.as_str().map(String::from)) {
+            if ["default", "dark", "clear", "tinted"].contains(&s.as_str()) {
+                c.icon_style = s;
+            }
+        }
+        if let Some(s) = v.remove("DockPosition").and_then(|x| x.as_str().map(String::from)) {
+            if ["bottom", "left", "right"].contains(&s.as_str()) {
+                c.dock_position = s;
             }
         }
         if let Some(Value::Array(r)) = v.remove("Recent") {
@@ -200,6 +261,27 @@ impl Config {
         }
         if let Some(x) = v.remove("Magnify").and_then(|x| x.as_f64()) {
             c.magnify = x.clamp(MAGNIFY.0, MAGNIFY.1);
+        }
+        if let Some(Value::Array(items)) = v.remove("WidgetItems") {
+            let loaded: Vec<String> = items.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+            if !loaded.is_empty() {
+                c.widget_items = loaded;
+            }
+        }
+        while c.widget_items.len() < 4 {
+            c.widget_items.push("none".into());
+        }
+        if let Some(pos) = v.remove("WidgetPosition").and_then(|x| x.as_str().map(String::from)) {
+            if ["top-right", "top-left", "bottom-right", "bottom-left", "custom"].contains(&pos.as_str()) {
+                c.widget_position = pos;
+            }
+        }
+        if let Some(Value::Array(arr)) = v.remove("WidgetOffset") {
+            if arr.len() >= 2 {
+                if let (Some(x), Some(y)) = (arr[0].as_i64(), arr[1].as_i64()) {
+                    c.widget_offset = Some((x as i32, y as i32));
+                }
+            }
         }
         c.extra = v;
         // docks set up before the Apps item existed get it once, after Finder (File Explorer) as on macOS;
@@ -230,6 +312,7 @@ impl Config {
             "Genie": self.genie,
             "IconTiles": self.icon_tiles,
             "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
             "Badges": self.badges,
             "TrayIcons": self.tray_icons,
             "AiUsage": self.ai_usage,
@@ -241,7 +324,12 @@ impl Config {
             "DownloadsStack": self.downloads_stack,
             "BatteryPercent": self.battery_percent,
             "DesktopWidgets": self.desktop_widgets,
+            "SecondaryDocks": self.secondary_docks,
+            "WidgetItems": self.widget_items,
+            "WidgetPosition": self.widget_position,
+            "WidgetOffset": self.widget_offset.map(|(x, y)| vec![x, y]),
             "AppSwitcher": self.app_switcher,
+            "CheckUpdates": self.check_updates,
             "GenieDuration": self.genie_ms,
             "MagnifySpeed": self.magnify_speed,
             "AutoHideDelay": self.hide_delay_ms,
@@ -249,13 +337,112 @@ impl Config {
             "ReduceMotion": self.reduce_motion,
             "Language": self.language,
             "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
+            "GlassTint": self.glass_tint,
+            "GlassOpacity": self.glass_opacity,
+            "DockShadow": self.dock_shadow,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
         }
+        // The widget window writes its layout straight to disk via save_widget_layout and never
+        // updates this in-memory Config, so a later save() here must not stomp it back with stale
+        // in-memory defaults (e.g. toggling any Settings switch would jump the widgets to top-right).
+        // Preserve whatever disk has for these keys.
+        if let Some(Value::Object(disk_map)) = std::fs::read_to_string(path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(s.trim_start_matches('\u{feff}')).ok())
+        {
+            for key in ["WidgetItems", "WidgetPosition", "WidgetOffset"] {
+                if let Some(v) = disk_map.get(key) {
+                    m.insert(key.to_string(), v.clone());
+                }
+            }
+        }
         let _ = std::fs::create_dir_all(dir());
         if let Ok(s) = serde_json::to_string_pretty(&Value::Object(m)) {
-            let _ = std::fs::write(path(), s);
+            write_atomic(&s);
         }
+    }
+
+    /// Save widget customization and position without touching or overwriting other dock settings.
+    pub fn save_widget_layout(items: &[String], position: &str, offset: Option<(i32, i32)>) {
+        let mut disk_val = std::fs::read_to_string(path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(s.trim_start_matches('\u{feff}')).ok())
+            .unwrap_or_else(|| Config::default().to_value());
+        if let Value::Object(ref mut m) = disk_val {
+            m.insert("WidgetItems".into(), json!(items));
+            m.insert("WidgetPosition".into(), json!(position));
+            m.insert("WidgetOffset".into(), json!(offset.map(|(x, y)| vec![x, y])));
+        }
+        let _ = std::fs::create_dir_all(dir());
+        if let Ok(s) = serde_json::to_string_pretty(&disk_val) {
+            write_atomic(&s);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn widget_item(&self, slot: usize) -> &str {
+        if slot < self.widget_items.len() {
+            &self.widget_items[slot]
+        } else {
+            match slot {
+                0 => "clock",
+                1 => "date",
+                2 => "battery",
+                3 => "system",
+                _ => "none",
+            }
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut m = self.extra.clone();
+        let fields = json!({
+            "Pinned": self.pinned,
+            "IconSize": self.icon_size,
+            "Magnify": self.magnify,
+            "HideTaskbar": self.hide_taskbar,
+            "MenuBar": self.menu_bar,
+            "Genie": self.genie,
+            "IconTiles": self.icon_tiles,
+            "AutoHide": self.auto_hide,
+            "SmartHide": self.smart_hide,
+            "Badges": self.badges,
+            "TrayIcons": self.tray_icons,
+            "AiUsage": self.ai_usage,
+            "ClaudeLimit5h": self.claude_limit_5h,
+            "ClaudeUsageOAuth": self.claude_usage_oauth,
+            "IconOverrides": self.icon_overrides,
+            "Recent": self.recent,
+            "ShowRecents": self.show_recents,
+            "DownloadsStack": self.downloads_stack,
+            "BatteryPercent": self.battery_percent,
+            "DesktopWidgets": self.desktop_widgets,
+            "SecondaryDocks": self.secondary_docks,
+            "WidgetItems": self.widget_items,
+            "WidgetPosition": self.widget_position,
+            "WidgetOffset": self.widget_offset.map(|(x, y)| vec![x, y]),
+            "AppSwitcher": self.app_switcher,
+            "CheckUpdates": self.check_updates,
+            "GenieDuration": self.genie_ms,
+            "MagnifySpeed": self.magnify_speed,
+            "AutoHideDelay": self.hide_delay_ms,
+            "AutoHideSpeed": self.hide_speed,
+            "ReduceMotion": self.reduce_motion,
+            "Language": self.language,
+            "LaunchpadStyle": self.launchpad_style,
+            "IconStyle": self.icon_style,
+            "DockPosition": self.dock_position,
+            "GlassTint": self.glass_tint,
+            "GlassOpacity": self.glass_opacity,
+            "DockShadow": self.dock_shadow,
+        });
+        if let Value::Object(f) = fields {
+            m.extend(f);
+        }
+        Value::Object(m)
     }
 }

@@ -34,6 +34,7 @@ pub enum Key {
     HideDelay,
     HideSpeed,
     ReduceMotion,
+    CheckUpdates,
     /// 0 auto, 1 English, 2 Indonesian
     Language,
     /// 0 the Apps window, 1 the classic full-screen Launchpad
@@ -46,6 +47,8 @@ pub enum Change {
     ResetAnimations,
     Restart,
     OpenConfig,
+    /// open the Settings window (e.g. from the widgets right-click menu)
+    Open,
 }
 
 const LANGS: [&str; 3] = ["auto", "en", "id"];
@@ -111,6 +114,7 @@ pub fn apply(c: &mut Config, k: Key, v: f64) -> bool {
         Key::TrayIcons => Some(&mut c.tray_icons),
         Key::Genie => Some(&mut c.genie),
         Key::ReduceMotion => Some(&mut c.reduce_motion),
+        Key::CheckUpdates => Some(&mut c.check_updates),
     };
     match flag {
         Some(f) => {
@@ -188,6 +192,7 @@ fn desktop_rows() -> Vec<Row> {
         Row::Switch(Key::TrayIcons, "Tray icons in the menu bar"),
         Row::Switch(Key::AiUsage, "AI usage in the menu bar"),
         Row::Switch(Key::ClaudeOAuth, "Claude limits from your Claude login"),
+        Row::Switch(Key::CheckUpdates, "Check for updates"),
         Row::Switch(Key::Widgets, "Desktop widgets"),
         Row::Switch(Key::Switcher, "Mac-style Alt+Tab"),
     ]
@@ -256,6 +261,7 @@ impl Settings {
             Key::TrayIcons => b(c.tray_icons),
             Key::Genie => b(c.genie),
             Key::ReduceMotion => b(c.reduce_motion),
+            Key::CheckUpdates => b(c.check_updates),
         }
     }
 
@@ -397,11 +403,11 @@ fn note_h(ui: &Ui, s: &str, w: f32) -> f32 {
     lines as f32 * ui.line_h(11.5, 400) + 16.0
 }
 
-const ALL: [Key; 23] = [
+const ALL: [Key; 24] = [
     Key::IconSize, Key::Magnify, Key::AutoHide, Key::Recents, Key::Downloads, Key::Tiles, Key::Badges,
     Key::HideTaskbar, Key::MenuBar, Key::Widgets, Key::Switcher, Key::BatteryPct, Key::AiUsage, Key::ClaudeOAuth,
     Key::TrayIcons, Key::Genie, Key::GenieMs, Key::MagnifySpeed, Key::HideDelay, Key::HideSpeed, Key::ReduceMotion,
-    Key::Language, Key::LaunchpadStyle,
+    Key::CheckUpdates, Key::Language, Key::LaunchpadStyle,
 ];
 
 fn id_of(k: Key) -> u32 {

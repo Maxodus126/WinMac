@@ -1,6 +1,6 @@
 [package]
 name = "winmac"
-version = "1.0.0"
+version = "1.2.4"
 edition = "2021"
 description = "A macOS-style dock and menu bar for Windows 11"
 license = "MIT"
@@ -39,6 +39,8 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
     "Win32_System_Threading",
+    "Win32_System_Performance",
+    "Win32_Storage_Xps",
     "Win32_Security",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",

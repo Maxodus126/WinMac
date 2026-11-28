@@ -157,6 +157,12 @@ impl Backdrop {
                 return None;
             }
             let (dev, ctx) = crate::gfx::d3d()?; // shared with the GPU genie, multithread-protected
+            // The capture callback runs on another thread and uses this same immediate context. If
+            // multithread protection could not be enabled, sharing it would be UB: the live backdrop is a
+            // luxury, so degrade gracefully (return None) rather than risk corruption/crashes.
+            if !crate::gfx::d3d_multithread_ok() {
+                return None;
+            }
             let rt: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&dev.cast::<IDXGIDevice>().ok()?).ok()?.cast().ok()?;
             NOTIFY.set(notify.0 as isize);
             // window opened, closed, moved, raised, minimized or restored
@@ -205,7 +211,7 @@ impl Backdrop {
                 src.GetDesc(&mut desc);
                 let (w, h) = ((size.Width.max(1) as u32).min(desc.Width), (size.Height.max(1) as u32).min(desc.Height));
                 {
-                    let mut l = l2.get().lock().unwrap();
+                    let mut l = l2.get().lock().unwrap_or_else(|e| e.into_inner());
                     if l.tex.is_none() || (l.w, l.h) != (w, h) {
                         let d = D3D11_TEXTURE2D_DESC {
                             Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -307,7 +313,7 @@ impl Backdrop {
         for (h, rect) in &list {
             let Some(cap) = self.caps.get(h) else { continue };
             let latest = cap.latest.clone();
-            let mut l = latest.get().lock().unwrap();
+            let mut l = latest.get().lock().unwrap_or_else(|e| e.into_inner());
             let Some(tex) = l.tex.clone() else { continue };
             if !(l.fresh || region_moved || cap.rect != *rect || cap.crop.is_none()) {
                 continue;
@@ -326,6 +332,28 @@ impl Backdrop {
                 let pm = self.read(&tex, t)?;
                 Some((RECT { left: cr.left + t.left, top: cr.top + t.top, right: cr.left + t.right, bottom: cr.top + t.bottom }, pm))
             });
+            // A freshly opening window paints its first frame black; ignore such near-black captures so the
+            // dock never shows a black block at the window's edge while it animates in (keep the previous
+            // crop, or wallpaper underneath if there is none).
+            let crop = match crop {
+                Some((r, pm)) => {
+                    let dark = {
+                        let d = pm.data();
+                        let n = d.len() / 4;
+                        if n == 0 {
+                            true
+                        } else {
+                            let mut sum: u64 = 0;
+                            for px in d.chunks_exact(4) {
+                                sum += (px[0] as u64 + px[1] as u64 + px[2] as u64) / 3;
+                            }
+                            (sum / n as u64) < 3
+                        }
+                    };
+                    if dark { self.caps.get(h).and_then(|c| c.crop.clone()) } else { Some((r, pm)) }
+                }
+                None => None,
+            };
             let cap = self.caps.get_mut(h).unwrap();
             let same = match (&cap.crop, &crop) {
                 (Some((ra, a)), Some((rb, b))) => ra == rb && a.data() == b.data(),

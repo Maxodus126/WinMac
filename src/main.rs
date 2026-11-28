@@ -5,10 +5,12 @@
 #![windows_subsystem = "windows"]
 
 mod backdrop;
+mod display;
 mod badges;
 mod config;
 mod dock;
 mod dropfiles;
+mod dynamic_island;
 mod ai_usage;
 mod apps;
 mod spotlight;
@@ -23,12 +25,17 @@ mod launchpad;
 mod fly_wifi;
 mod flyout;
 mod genie;
+mod forcequit;
 mod i18n;
 mod genie_gpu;
 mod gfx;
+mod hotcorners;
 mod menu;
 mod menubar;
+mod notification_center;
+mod nowplaying;
 mod power;
+mod preview;
 mod shell;
 mod switcher;
 mod sysctl;
@@ -43,7 +50,7 @@ use std::cell::RefCell;
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, RECT};
 use windows::Win32::Graphics::Dwm::DwmFlush;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -53,7 +60,7 @@ use config::Config;
 use dock::{Act, Dock, DockEv};
 
 pub enum Ev {
-    Dock(DockEv),
+    Dock(HWND, DockEv),
     Genie(genie::GenieEv),
     Bar(menubar::BarEv),
     /// the flyout window it came from (a closing one still sends a deactivate)
@@ -64,6 +71,12 @@ pub enum Ev {
     Settings(fly_settings::Change),
     /// Alt+Space
     Spotlight,
+    /// Hot Corners: corner index (0 TL, 1 TR, 2 BL, 3 BR)
+    HotCorner(u8),
+    /// Ctrl+Alt+Q: force-quit panel
+    ForceQuit,
+    /// Win+Tab (taken over from Windows Task View)
+    WinTab,
 }
 
 thread_local! {
@@ -72,6 +85,26 @@ thread_local! {
 
 pub fn push(e: Ev) {
     EVENTS.with(|q| q.borrow_mut().push(e));
+}
+
+/// RAII balance for CoInitializeEx on worker threads. It only CoUninitializes when THIS call actually
+/// initialized the thread (S_OK / S_FALSE); if the thread already had COM in another model
+/// (RPC_E_CHANGED_MODE) it leaves that untouched — blindly pairing would corrupt the main thread's STA.
+pub(crate) struct ComInit {
+    armed: bool,
+}
+impl ComInit {
+    pub(crate) fn new(flags: COINIT) -> ComInit {
+        let armed = unsafe { CoInitializeEx(None, flags).is_ok() };
+        ComInit { armed }
+    }
+}
+impl Drop for ComInit {
+    fn drop(&mut self) {
+        if self.armed {
+            unsafe { let _ = CoUninitialize(); }
+        }
+    }
 }
 
 /// Our windows must never take focus from the user's app; a menu may have lifted the flag.
@@ -103,25 +136,31 @@ unsafe extern "system" fn on_win_event(_: HWINEVENTHOOK, ev: u32, h: HWND, obj: 
 
 struct App {
     dock: Dock,
+    secondary: Vec<Dock>,
     genie: Option<genie::Genie>,
     bar: Option<menubar::MenuBar>,
     fly: Option<flyout::Flyout>,
     /// the Settings window, which lives beside the drop-down flyouts
     win: Option<flyout::Flyout>,
     fullscreen: bool,
+    /// Explorer pid, so we can re-claim our reserved screen space after Explorer restarts.
+    explorer_pid: Option<u32>,
     /// menu bar, widgets, Alt+Tab, Claude login as this process started them (changing them needs a restart)
     started: [bool; 4],
 }
 
 impl App {
     fn awake(&self) -> bool {
-        self.dock.awake || self.genie.as_ref().is_some_and(|g| g.busy())
+        self.dock.awake || self.secondary.iter().any(|d| d.awake) || self.genie.as_ref().is_some_and(|g| g.busy())
     }
 
     /// The dock icon a window belongs to, in screen pixels.
-    fn icon_for(&mut self, h: HWND) -> genie::R {
-        let (x, y, w, hh) = self.dock.icon_rect_for(h);
-        let d = self.dock.dpi;
+    fn icon_for(&mut self, h: HWND, source: Option<HWND>) -> genie::R {
+        use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+        let mon = unsafe { MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST) };
+        let dock = self.secondary.iter_mut().find(|d| source.map_or(d.display.id == mon, |src| d.hwnd == src)).unwrap_or(&mut self.dock);
+        let (x, y, w, hh) = dock.icon_rect_for(h);
+        let d = dock.dpi;
         genie::R { x: x * d, y: y * d, w: w * d, h: hh * d }
     }
 
@@ -133,7 +172,9 @@ impl App {
         unsafe {
             if up {
                 let f = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
-                let _ = SetWindowPos(self.dock.hwnd, HWND_TOPMOST, 0, 0, 0, 0, f);
+                for d in std::iter::once(&self.dock).chain(&self.secondary) {
+                    let _ = SetWindowPos(d.hwnd, HWND_TOPMOST, 0, 0, 0, 0, f);
+                }
                 if let Some(b) = self.bar.as_ref() {
                     let _ = SetWindowPos(b.hwnd, HWND_TOPMOST, 0, 0, 0, 0, f);
                 }
@@ -142,37 +183,46 @@ impl App {
         widgets::set_raised(up);
     }
 
-    /// Returns false to quit.
-    fn act(&mut self, a: Act) -> bool {
+    /// Returns false to quit. `source` is the dock window the action came from.
+    fn act(&mut self, a: Act, source: HWND) -> bool {
         match a {
             Act::Quit => return false,
             Act::OpenSettings => self.open_settings(),
             Act::OpenLaunchpad => self.open_launchpad(),
-            Act::Fullscreen(on) => self.set_fullscreen(on),
+            Act::Fullscreen => self.update_fullscreen(),
             Act::Minimize { fg, wins } => {
-                let icon = self.icon_for(fg);
+                let icon = self.icon_for(fg, Some(source));
                 match self.genie.as_mut() {
                     Some(g) => g.minimize_from_dock(fg, wins, icon),
                     None => genie::minimize_all(&wins),
                 }
             }
             Act::Restore { front, minimized } => {
-                let icon = self.icon_for(front);
+                let icon = self.icon_for(front, Some(source));
                 match self.genie.as_mut() {
                     Some(g) => g.restore(front, minimized, icon),
-                    None => genie::restore_all(front, &minimized),
+                    None => genie::restore_async(front, minimized),
                 }
             }
         }
         true
     }
 
-    fn set_fullscreen(&mut self, on: bool) {
-        if on && !foreground_is_fullscreen() {
-            return; // e.g. our own overlays; only hide for a real fullscreen app
+    fn update_fullscreen(&mut self) {
+        let full_rect = foreground_fullscreen_rect();
+        for d in &mut self.secondary {
+            d.set_fullscreen_hidden(full_rect == Some(d.display.rect));
         }
+        let on = full_rect == Some(self.dock.display.rect);
         if on != self.fullscreen {
             self.fullscreen = on;
+            if !on {
+                // Re-hide the Windows taskbar BEFORE the dock and menu bar re-claim their AppBar
+                // strips: Explorer re-shows its bar as the fullscreen app leaves, and if our
+                // reservations land first there is a transient window where the visible bar and our
+                // strip occupy the same screen edge (a brief blank/overlap flicker).
+                taskbar::keep_hidden();
+            }
             self.dock.set_fullscreen_hidden(on);
             if let Some(g) = self.genie.as_mut() {
                 g.pause(on); // game mode: nothing of ours in the input path
@@ -180,9 +230,6 @@ impl App {
             ai_usage::set_paused(on);
             if let Some(b) = self.bar.as_mut() {
                 b.set_hidden(on);
-            }
-            if !on {
-                taskbar::keep_hidden(); // Explorer re-shows it as the fullscreen app leaves
             }
         }
     }
@@ -210,6 +257,8 @@ impl App {
             menubar::Extra::Tray => Box::new(fly_tray::TrayFly::new()),
             menubar::Extra::Ai => Box::new(fly_ai::AiFly::new()),
             menubar::Extra::Calendar => Box::new(fly_cal::CalFly::new()),
+            menubar::Extra::NotificationCenter => Box::new(notification_center::NotificationCenter::new()),
+            menubar::Extra::DynamicIsland => Box::new(dynamic_island::DynamicIsland::new()),
             menubar::Extra::Settings => return self.open_settings(),
             menubar::Extra::Launchpad => self.all_apps(),
             menubar::Extra::Spotlight => Box::new(spotlight::Spotlight::new(!self.dock.config().reduce_motion)),
@@ -280,6 +329,10 @@ impl App {
                 shell::launch(&config::path());
                 return true;
             }
+            Change::Open => {
+                self.open_settings();
+                return true;
+            }
             Change::ResetAnimations => {
                 self.dock.update_config(fly_settings::reset_animations);
             }
@@ -315,6 +368,11 @@ impl App {
                         } else {
                             taskbar::restore(false);
                         }
+                        // the taskbar's reservation changed: re-anchor the dock to where it now sits,
+                        // but not under a fullscreen app (the release would be re-added)
+                        if self.dock.is_visible() {
+                            self.dock.reserve();
+                        }
                     }
                     Key::BatteryPct | Key::AiUsage | Key::TrayIcons => {
                         let (o, on) = match k {
@@ -334,8 +392,46 @@ impl App {
             }
         }
         self.dock.settings_changed(&old, done);
+        if old.secondary_docks != self.dock.cfg.secondary_docks { self.reconcile_displays(); }
+        self.sync_config(self.dock.hwnd, done);
         self.apply_genie_timing();
         true
+    }
+
+    fn reconcile_displays(&mut self) {
+        self.dock.display = display::Display::primary();
+        let wanted = if self.dock.cfg.secondary_docks { display::secondary() } else { Vec::new() };
+        self.secondary.retain_mut(|dock| {
+            if let Some(d) = wanted.iter().find(|d| d.id == dock.display.id) {
+                if *d != dock.display { dock.display = *d; dock.apply_display(); }
+                true
+            } else {
+                destroy_dock(dock);
+                false
+            }
+        });
+        for d in wanted {
+            if self.secondary.iter().any(|dock| dock.display.id == d.id) { continue; }
+            let hwnd = dock::create_window();
+            dropfiles::register(hwnd);
+            let mut dock = Dock::new(hwnd, self.dock.cfg.clone(), d);
+            dock.start();
+            self.secondary.push(dock);
+        }
+    }
+
+    // Propagate a saved change before another screen handles input and saves its copy.
+    fn sync_config(&mut self, source: HWND, relayout: bool) {
+        let cfg = if source == self.dock.hwnd {
+            if !std::mem::take(&mut self.dock.config_dirty) || self.secondary.is_empty() { return; }
+            self.dock.cfg.clone()
+        } else {
+            let Some(d) = self.secondary.iter_mut().find(|d| d.hwnd == source) else { return };
+            if !std::mem::take(&mut d.config_dirty) { return; }
+            self.dock.mirror_config(&d.cfg, relayout);
+            self.dock.cfg.clone()
+        };
+        for d in &mut self.secondary { if d.hwnd != source { d.mirror_config(&cfg, relayout); } }
     }
 
     fn apply_genie_timing(&mut self) {
@@ -349,19 +445,47 @@ impl App {
 
     fn handle(&mut self, e: Ev) -> bool {
         match e {
-            Ev::Dock(de) => {
-                if let DockEv::Refresh = de {
-                    // Explorer's ABN_FULLSCREENAPP is unreliable with its taskbar hidden: ask on every refresh
-                    let fs = foreground_is_fullscreen();
-                    if fs != self.fullscreen {
-                        self.set_fullscreen(fs);
+            Ev::Dock(source, de) => {
+                let primary = source == self.dock.hwnd;
+                if !primary && matches!(de, DockEv::DisplayChanged) {
+                    // A DPI change can be delivered only to the window on the affected monitor.
+                    self.dock.handle(DockEv::DisplayChanged);
+                    return true;
+                }
+                if primary && matches!(de, DockEv::DisplaySettled) { self.reconcile_displays(); }
+                if primary && matches!(de, DockEv::Backdrop(true)) {
+                    for d in &mut self.secondary { d.handle(DockEv::Backdrop(true)); }
+                }
+                if primary && matches!(de, DockEv::Refresh) {
+                    // Explorer restarted (it holds our AppBar reservation): re-claim the reserved screen
+                    // space, or maximized windows slide behind the dock/menu bar again.
+                    if let Some(pid) = taskbar::explorer_pid() {
+                        if self.explorer_pid != Some(pid) {
+                            self.explorer_pid = Some(pid);
+                            if let Some(b) = self.bar.as_mut() {
+                                b.shell_restarted();
+                            }
+                            self.dock.shell_restarted();
+                            for d in &mut self.secondary { d.shell_restarted(); }
+                        }
+                        if let Some(b) = self.bar.as_mut() {
+                            b.ensure_reservation();
+                        }
+                        self.dock.ensure_reservation();
+                        for d in &mut self.secondary { d.ensure_reservation(); }
                     }
+                    // Explorer's ABN_FULLSCREENAPP is unreliable with its taskbar hidden: ask on every refresh
+                    self.update_fullscreen();
                 }
-                if let Some(a) = self.dock.handle(de) {
-                    return self.act(a);
-                }
+                let action = if primary { self.dock.handle(de) } else {
+                    let Some(d) = self.secondary.iter_mut().find(|d| d.hwnd == source) else { return true };
+                    d.handle(de)
+                };
+                self.sync_config(source, true);
+                if let Some(a) = action { return self.act(a, source); }
             }
             Ev::Foreground(h) => {
+                for d in &mut self.secondary { d.on_foreground(HWND(h as *mut _)); }
                 self.keep_over_desktop(HWND(h as *mut _));
                 self.dock.on_foreground(HWND(h as *mut _));
                 if let Some(b) = self.bar.as_mut() {
@@ -378,7 +502,7 @@ impl App {
             }
             Ev::MinimizeStart(h) => {
                 if self.genie.is_some() {
-                    let icon = self.icon_for(HWND(h as *mut _));
+                    let icon = self.icon_for(HWND(h as *mut _), None);
                     self.genie.as_mut().unwrap().on_minimize_start(HWND(h as *mut _), icon);
                 }
             }
@@ -387,11 +511,15 @@ impl App {
                 b.auto_hide_dock = self.dock.auto_hide();
                 match b.handle(be) {
                     Some(menubar::BarAct::Quit) => return false,
+                    Some(menubar::BarAct::Restart) => {
+                        restart();
+                        return false;
+                    }
                     Some(menubar::BarAct::ToggleAutoHide) => {
                         let on = !self.dock.auto_hide();
                         self.dock.set_auto_hide(on);
                     }
-                    Some(menubar::BarAct::Fullscreen(on)) => self.set_fullscreen(on),
+                    Some(menubar::BarAct::Fullscreen(_)) => self.update_fullscreen(),
                     Some(menubar::BarAct::Option(o, on)) => {
                         let c = self.dock.update_config(|c| match o {
                             menubar::BarOpt::BatteryPercent => c.battery_percent = on,
@@ -435,14 +563,29 @@ impl App {
             }
             Ev::Settings(ch) => return self.on_settings(ch),
             Ev::Spotlight => self.open_spotlight(),
+            Ev::HotCorner(c) => match c {
+                0 => self.open_spotlight(),
+                1 => self.open_launchpad(),
+                3 => crate::hotcorners::show_desktop(),
+                _ => {}
+            },
+            Ev::ForceQuit => crate::forcequit::show(),
+            Ev::WinTab => crate::switcher::tab(false),
             Ev::Genie(ge) => {
                 if let Some(g) = self.genie.as_mut() {
                     g.handle(ge);
                 }
             }
         }
+        self.sync_config(self.dock.hwnd, true);
         true
     }
+}
+
+fn destroy_dock(d: &mut Dock) {
+    d.shutdown();
+    dropfiles::unregister(d.hwnd);
+    unsafe { let _ = DestroyWindow(d.hwnd); }
 }
 
 /// Start a fresh copy that waits for this one to quit (the caller then returns false to end the loop).
@@ -470,6 +613,9 @@ fn low_integrity() -> bool {
         }
         let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
         let count = *GetSidSubAuthorityCount(label.Label.Sid) as u32;
+        if count == 0 {
+            return false; // no authorities: nothing to compare, not low-integrity
+        }
         *GetSidSubAuthority(label.Label.Sid, count - 1) < 0x2000
     }
 }
@@ -509,41 +655,59 @@ fn desktop_raised() -> bool {
     }
 }
 
-fn foreground_is_fullscreen() -> bool {
+fn foreground_fullscreen_rect() -> Option<RECT> {
     unsafe {
         let fg = GetForegroundWindow();
         if fg.0.is_null() || shell::window_pid(fg) == std::process::id() {
-            return false;
+            return None;
         }
         // screenshot / screen tool overlays cover the screen for a moment; hiding for them made dock and bar
         // blink away on every Win+Shift+S. Tool windows (no taskbar button) are never a game either.
         if GetWindowLongPtrW(fg, GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as isize != 0 {
-            return false;
+            return None;
         }
         const OVERLAYS: [&str; 9] = [
             "ScreenClippingHost.exe", "SnippingTool.exe", "ScreenSketch.exe", "ShareX.exe", "Lightshot.exe",
             "Greenshot.exe", "PowerToys.ScreenRuler.exe", "PowerToys.PowerOCR.exe", "PowerToys.ColorPickerUI.exe",
         ];
         if shell::exe_name(shell::window_pid(fg)).is_some_and(|n| OVERLAYS.iter().any(|o| shell::eq_ic(o, &n))) {
-            return false;
+            return None;
         }
         let mut cls = [0u16; 64];
         let n = GetClassNameW(fg, &mut cls) as usize;
         let cls = String::from_utf16_lossy(&cls[..n]);
         if ["Progman", "WorkerW", "Shell_TrayWnd"].contains(&cls.as_str()) {
-            return false;
+            return None;
         }
-        // anything with a title bar is not fullscreen, even when it covers the whole screen because no AppBar
-        // space is reserved; a fullscreen app sits exactly on the monitor without one. Not IsZoomed: Chrome and
-        // Edge keep WS_MAXIMIZE when a maximized window goes fullscreen (F11, YouTube), only the caption goes.
-        if GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION.0 as isize == WS_CAPTION.0 as isize {
-            return false;
-        }
+        // Fullscreen detection: a real fullscreen app covers either the whole monitor or the whole work
+        // area. Chrome/Edge keep WS_MAXIMIZE when they go fullscreen (F11, YouTube) — only the caption
+        // goes — so we check geometry rather than rejecting WS_CAPTION outright. But a bordered window
+        // that is merely maximized keeps its caption and decorations, so it is not truly fullscreen:
+        // the dock stays on top.
         let mut r = RECT::default();
         if GetWindowRect(fg, &mut r).is_err() {
-            return false;
+            return None;
         }
-        r.left == 0 && r.top == 0 && r.right == GetSystemMetrics(SM_CXSCREEN) && r.bottom == GetSystemMetrics(SM_CYSCREEN)
+        let has_caption = GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION.0 as isize == WS_CAPTION.0 as isize;
+        let maximized = GetWindowLongPtrW(fg, GWL_STYLE) & WS_MAXIMIZE.0 as isize == WS_MAXIMIZE.0 as isize;
+        if maximized && has_caption {
+            // Maximized bordered window: covers the work area but is not truly fullscreen.
+            return None;
+        }
+        let screen = RECT {
+            left: 0, top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN),
+        };
+        let covers = |r: &RECT, target: &RECT| r.left <= target.left && r.top <= target.top && r.right >= target.right && r.bottom >= target.bottom;
+        // Only a true fullscreen window covers the entire monitor (including the dock's reserved strip).
+        // A merely maximized bordered window covers only the work area (below the dock strip) — we keep
+        // the dock visible on top of it.
+        if covers(&r, &screen) {
+            Some(r)
+        } else {
+            None
+        }
     }
 }
 
@@ -555,12 +719,15 @@ fn main() {
         return;
     }
     // no console in a windows-subsystem exe: keep the last panic where it can be read
+    // Best-effort: anything that fails here must not double-panic.
     std::panic::set_hook(Box::new(|info| {
-        let _ = std::fs::create_dir_all(config::dir());
-        let bt = std::backtrace::Backtrace::force_capture();
-        let _ = std::fs::write(format!("{}\\panic.log", config::dir()), format!("{info}\n{bt}"));
-        taskbar::restore(true);
-        genie::restore_system_animation();
+        if let Ok(dir) = std::fs::create_dir_all(config::dir()) {
+            let _ = dir;
+            let bt = std::backtrace::Backtrace::force_capture();
+            let _ = std::fs::write(format!("{}\\panic.log", config::dir()), format!("{info}\n{bt}"));
+            let _ = taskbar::restore(true);
+            let _ = genie::restore_system_animation();
+        }
     }));
     // one dock at a time; the C# build uses the same name, so the two never run together
     // after "Restart WIN MAC" the old process may still be shutting down: wait for it a few seconds
@@ -605,9 +772,6 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     }
     let cfg = Config::load();
     i18n::set(&cfg.language);
-    if cfg.hide_taskbar {
-        taskbar::hide();
-    }
     let hwnd = dock::create_window();
     dropfiles::register(hwnd);
     let genie = cfg.genie.then(genie::Genie::new);
@@ -617,8 +781,9 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     }
     let want_widgets = cfg.desktop_widgets;
     let want_switcher = cfg.app_switcher;
+    let check_updates = cfg.check_updates;
     let started = [cfg.menu_bar, want_widgets, want_switcher, cfg.claude_usage_oauth];
-    let mut app = App { dock: Dock::new(hwnd, cfg), genie, bar, fly: None, win: None, fullscreen: false, started };
+    let mut app = App { dock: Dock::new(hwnd, cfg, display::Display::primary()), secondary: Vec::new(), genie, bar, fly: None, win: None, fullscreen: false, explorer_pid: None, started };
     app.apply_genie_timing();
     if app.dock.config().launchpad_style == "classic" {
         flyout::warm_backdrop(); // only the full-screen Launchpad draws over it (~8 MB at 1080p)
@@ -627,13 +792,24 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
         b.start(); // reserve the top strip before the dock measures the work area
     }
     app.dock.start();
+    app.reconcile_displays();
+    if app.dock.config().hide_taskbar {
+        taskbar::hide(); // autohide Explorer's bar; our opaque dock band covers the remaining strip
+    }
     if want_widgets {
         widgets::start(); // after the bar and dock reserved their strips, so the work area is final
     }
     if want_switcher {
         switcher::start();
     }
-    update::start();
+    preview::start(); // dock hover window previews, independent of the switcher setting
+    hotcorners::start(); // trigger Spotlight/Launchpad/show-desktop from the screen corners
+    nowplaying::start(); // auto now-playing pill at the top centre
+    forcequit::start(); // Ctrl+Alt+Q force-quit panel
+    if check_updates {
+        update::cleanup(); // remove a winmac.exe.update-old left by a previous auto-update
+        update::start();
+    }
     if std::env::args().any(|a| a == "--settings") {
         app.open_settings();
     }
@@ -647,8 +823,10 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
 
     unsafe {
         // Spotlight on Alt+Space (macOS has Cmd+Space; Win+Space is taken by the keyboard layouts)
-        use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_ALT, MOD_NOREPEAT, VK_SPACE};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_WIN, VK_Q, VK_SPACE, VK_TAB};
         let _ = RegisterHotKey(HWND::default(), 1, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
+        let _ = RegisterHotKey(HWND::default(), 2, MOD_CONTROL | MOD_ALT, VK_Q.0 as u32);
+        let _ = RegisterHotKey(HWND::default(), 4, MOD_WIN, VK_TAB.0 as u32);
         let mut msg = MSG::default();
         'run: loop {
             if !app.awake() {
@@ -657,7 +835,12 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
                     break;
                 }
                 if msg.message == WM_HOTKEY {
-                    push(Ev::Spotlight);
+                    match msg.wParam.0 {
+                        1 => push(Ev::Spotlight),
+                        2 => push(Ev::ForceQuit),
+                        4 => push(Ev::WinTab),
+                        _ => {}
+                    }
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -667,7 +850,12 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
                     break 'run;
                 }
                 if msg.message == WM_HOTKEY {
-                    push(Ev::Spotlight);
+                    match msg.wParam.0 {
+                        1 => push(Ev::Spotlight),
+                        2 => push(Ev::ForceQuit),
+                        4 => push(Ev::WinTab),
+                        _ => {}
+                    }
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -688,6 +876,7 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
                 if app.dock.awake {
                     app.dock.frame();
                 }
+                for d in &mut app.secondary { if d.awake { d.frame(); } }
                 let t1 = std::time::Instant::now();
                 if let Some(g) = app.genie.as_mut() {
                     g.frame();
@@ -706,7 +895,9 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
         if let Some(b) = app.bar.as_mut() {
             b.shutdown();
         }
+        for d in &mut app.secondary { destroy_dock(d); }
         app.dock.shutdown();
+        dropfiles::unregister(hwnd);
         taskbar::restore(false);
         let _ = DestroyWindow(hwnd);
     }

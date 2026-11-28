@@ -29,9 +29,9 @@ fn mta() {
 
 /// Blocking.
 pub fn adapter() -> Option<WiFiAdapter> {
-    let mut a = ADAPTER.lock().unwrap();
+    let mut a = ADAPTER.lock().unwrap_or_else(|p| p.into_inner());
     if a.is_none() {
-        let mut asked = ASKED.lock().unwrap();
+        let mut asked = ASKED.lock().unwrap_or_else(|p| p.into_inner());
         if !*asked {
             *asked = true;
             let ok = WiFiAdapter::RequestAccessAsync().and_then(|o| o.get()).is_ok_and(|s| s == WiFiAccessStatus::Allowed);
@@ -46,7 +46,7 @@ pub fn adapter() -> Option<WiFiAdapter> {
 
 /// Blocking.
 pub fn radio() -> Option<Radio> {
-    let mut r = RADIO.lock().unwrap();
+    let mut r = RADIO.lock().unwrap_or_else(|p| p.into_inner());
     if r.is_none() {
         let _ = Radio::RequestAccessAsync().and_then(|o| o.get());
         if let Ok(all) = Radio::GetRadiosAsync().and_then(|o| o.get()) {
@@ -142,7 +142,7 @@ fn find_net(ad: &WiFiAdapter, ssid: &str) -> Option<WiFiAvailableNetwork> {
 fn reload(st: &Mutex<State>, scan: bool) {
     let on = is_on();
     {
-        let mut s = st.lock().unwrap();
+        let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
         s.on = on;
         s.loaded = true;
         if !on {
@@ -158,19 +158,19 @@ fn reload(st: &Mutex<State>, scan: bool) {
     let cur = net::current();
     let wired = cur.is_none() && net::wired();
     {
-        let mut s = st.lock().unwrap();
+        let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
         s.current = cur.clone();
         if wired && s.status.is_empty() {
             s.status = "Not connected · using Ethernet".into();
         }
     }
     let Some(ad) = adapter() else {
-        st.lock().unwrap().status = "No access to Wi-Fi. Allow location for desktop apps in Settings › Privacy › Location.".into();
+        st.lock().unwrap_or_else(|p| p.into_inner()).status = "No access to Wi-Fi. Allow location for desktop apps in Settings › Privacy › Location.".into();
         return;
     };
     if scan {
         {
-            let mut s = st.lock().unwrap();
+            let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
             if s.current.is_none() && s.status.is_empty() {
                 s.status = "Searching…".into();
             }
@@ -199,7 +199,7 @@ fn reload(st: &Mutex<State>, scan: bool) {
     }
     let mut nets: Vec<NetInfo> = nets.into_iter().map(|(n, _)| n).collect();
     nets.sort_by(|a, b| b.bars.cmp(&a.bars).then_with(|| a.ssid.to_lowercase().cmp(&b.ssid.to_lowercase())));
-    let mut s = st.lock().unwrap();
+    let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
     if s.status == "Searching…" {
         s.status.clear();
     }
@@ -219,7 +219,7 @@ impl WifiFly {
     fn run(&self, f: impl FnOnce(&Mutex<State>) + Send + 'static) {
         let st = self.st.clone();
         {
-            let mut s = st.lock().unwrap();
+            let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
             if s.busy {
                 return;
             }
@@ -227,16 +227,16 @@ impl WifiFly {
         }
         spawn(self.hwnd, move || {
             f(&st);
-            st.lock().unwrap().busy = false;
+            st.lock().unwrap_or_else(|p| p.into_inner()).busy = false;
         });
     }
 
     fn join(&mut self, ssid: String, secured: bool, password: Option<String>) {
-        self.st.lock().unwrap().status = format!("Joining {ssid}…");
+        self.st.lock().unwrap_or_else(|p| p.into_inner()).status = format!("Joining {ssid}…");
         self.run(move |st| {
             let Some(ad) = adapter() else { return };
             let Some(n) = find_net(&ad, &ssid) else {
-                st.lock().unwrap().status = format!("{ssid} is out of range.");
+                st.lock().unwrap_or_else(|p| p.into_inner()).status = format!("{ssid} is out of range.");
                 return;
             };
             let r = match &password {
@@ -249,7 +249,7 @@ impl WifiFly {
             let status = r.and_then(|r| r.ConnectionStatus()).unwrap_or(WiFiConnectionStatus::UnspecifiedFailure);
             if status == WiFiConnectionStatus::Success {
                 {
-                    let mut s = st.lock().unwrap();
+                    let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
                     s.expanded = None;
                     s.status.clear();
                 }
@@ -257,7 +257,7 @@ impl WifiFly {
                 reload(st, false);
                 return;
             }
-            let mut s = st.lock().unwrap();
+            let mut s = st.lock().unwrap_or_else(|p| p.into_inner());
             if password.is_some() {
                 s.status = if status == WiFiConnectionStatus::InvalidCredential { "Wrong password.".into() } else { format!("Couldn't join ({}).", status_name(status)) };
             } else if secured
@@ -273,7 +273,7 @@ impl WifiFly {
     }
 
     fn submit(&mut self) {
-        let Some(ssid) = self.st.lock().unwrap().expanded.clone() else { return };
+        let Some(ssid) = self.st.lock().unwrap_or_else(|p| p.into_inner()).expanded.clone() else { return };
         if self.password.is_empty() {
             return;
         }
@@ -297,9 +297,9 @@ impl Content for WifiFly {
     fn click(&mut self, id: u32, _fx: f32) -> Cmd {
         match id {
             ID_SWITCH => {
-                let on = !self.st.lock().unwrap().on;
+                let on = !self.st.lock().unwrap_or_else(|p| p.into_inner()).on;
                 {
-                    let mut s = self.st.lock().unwrap();
+                    let mut s = self.st.lock().unwrap_or_else(|p| p.into_inner());
                     s.on = on;
                     s.status = if on { "Turning on…".into() } else { String::new() };
                 }
@@ -307,7 +307,7 @@ impl Content for WifiFly {
                     set_on(on);
                     std::thread::sleep(std::time::Duration::from_millis(if on { 1500 } else { 200 }));
                     if on {
-                        st.lock().unwrap().status.clear();
+                        st.lock().unwrap_or_else(|p| p.into_inner()).status.clear();
                     }
                     reload(st, on);
                 });
@@ -322,9 +322,9 @@ impl Content for WifiFly {
             ID_SETTINGS => return Cmd::Launch("ms-settings:network-wifi".into()),
             ID_JOIN => self.submit(),
             id if id >= ID_NET => {
-                let n = self.st.lock().unwrap().nets.get((id - ID_NET) as usize).cloned();
+                let n = self.st.lock().unwrap_or_else(|p| p.into_inner()).nets.get((id - ID_NET) as usize).cloned();
                 if let Some(n) = n {
-                    if self.st.lock().unwrap().expanded.as_deref() == Some(&n.ssid) {
+                    if self.st.lock().unwrap_or_else(|p| p.into_inner()).expanded.as_deref() == Some(&n.ssid) {
                         return Cmd::None;
                     }
                     self.password.clear();
@@ -337,7 +337,7 @@ impl Content for WifiFly {
     }
 
     fn char(&mut self, c: char) -> Cmd {
-        if self.st.lock().unwrap().expanded.is_none() {
+        if self.st.lock().unwrap_or_else(|p| p.into_inner()).expanded.is_none() {
             return Cmd::None;
         }
         match c {
@@ -352,7 +352,7 @@ impl Content for WifiFly {
     }
 
     fn wheel(&mut self, delta: i32) {
-        let n = self.st.lock().unwrap().nets.len();
+        let n = self.st.lock().unwrap_or_else(|p| p.into_inner()).nets.len();
         let visible = (LIST_MAX / ROW_H) as usize;
         let max = n.saturating_sub(visible);
         self.scroll = if delta < 0 { (self.scroll + 1).min(max) } else { self.scroll.saturating_sub(1) };
@@ -362,7 +362,7 @@ impl Content for WifiFly {
 
     fn draw(&mut self, ui: &mut Ui) -> f32 {
         let w = ui.w;
-        let st = self.st.lock().unwrap();
+        let st = self.st.lock().unwrap_or_else(|p| p.into_inner());
         // header
         ui.text_mid(8.0, 10.0, "Wi-Fi", 13.5, 600, white(0xF2), 0.0);
         ui.switch(ID_SWITCH, w - 4.0 - 36.0, 0.0, st.on);

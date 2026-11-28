@@ -92,6 +92,7 @@ pub fn toasts() -> Vec<(String, i64)> {
 pub struct Seen {
     map: HashMap<String, i64>, // lower-case AUMID → FILETIME
     baseline: i64,             // first run: toasts from before WIN MAC knew about them don't count
+    dirty: bool,               // marks made since the last save
 }
 
 fn seen_path() -> String {
@@ -120,7 +121,7 @@ impl Seen {
                 b
             }
         };
-        let s = Seen { map, baseline };
+        let s = Seen { map, baseline, dirty: false };
         s.save();
         s
     }
@@ -136,8 +137,23 @@ impl Seen {
         self.map.get(&app.to_lowercase()).copied().unwrap_or(self.baseline)
     }
 
+    /// Record that `app` was looked at. The write to disk is deferred: `mark` runs on every focus change,
+    /// and saving on each one hammered the SSD. The baseline write in `load` still persists a fresh start.
     pub fn mark(&mut self, app: &str) {
-        self.map.insert(app.to_lowercase(), now_filetime());
-        self.save();
+        let key = app.to_lowercase();
+        let now = now_filetime();
+        // a real change is worth persisting soon; identical re-marks (same second) are not
+        let changed = self.map.insert(key, now) != Some(now);
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    /// Flush deferred marks. Called when the dock saves its own config (roughly once a minute) and on shutdown.
+    pub fn flush(&mut self) {
+        if self.dirty {
+            self.dirty = false;
+            self.save();
+        }
     }
 }

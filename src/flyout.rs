@@ -48,13 +48,13 @@ static BACKDROP: std::sync::Mutex<Option<std::sync::Arc<Pixmap>>> = std::sync::M
 
 /// The wallpaper changed: build the full-screen backdrop again next time it is needed.
 pub fn forget_backdrop() {
-    *BACKDROP.lock().unwrap() = None;
+    *BACKDROP.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Build the backdrop on a worker (decoding and blurring the wallpaper takes ~150 ms) so the Launchpad's first frame doesn't wait.
 pub fn warm_backdrop() {
     std::thread::spawn(|| unsafe {
-        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+        let _com = crate::ComInit::new(windows::Win32::System::Com::COINIT_MULTITHREADED);
         let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
         if sw > 0 && sh > 0 {
             let _ = stage_backdrop(sw as u32, sh as u32);
@@ -64,11 +64,12 @@ pub fn warm_backdrop() {
 
 /// The wallpaper at `w` x `h`, heavily blurred and dimmed like the macOS Launchpad background.
 fn stage_backdrop(w: u32, h: u32) -> std::sync::Arc<Pixmap> {
-    let mut cache = BACKDROP.lock().unwrap();
+    let mut cache = BACKDROP.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(b) = cache.as_ref().filter(|b| b.width() == w && b.height() == h) {
         return b.clone();
     }
-    let mut pm = Pixmap::new(w, h).unwrap();
+    // a very large screen can fail to allocate; fall back to a 1x1 rather than panicking
+    let mut pm = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).expect("1x1 pixmap"));
     pm.fill(Color::from_rgba8(0x1E, 0x22, 0x30, 0xFF));
     // blur a small copy and stretch it: smooth, and cheap enough to do on open
     let (bw, bh) = ((w / 8).max(8), (h / 8).max(8));
@@ -83,7 +84,11 @@ fn stage_backdrop(w: u32, h: u32) -> std::sync::Arc<Pixmap> {
     }
     let mut veil = Paint::default();
     veil.set_color(Color::from_rgba8(0, 0, 0, 0x5A));
-    pm.fill_rect(tiny_skia::Rect::from_xywh(0.0, 0.0, w as f32, h as f32).unwrap(), &veil, Transform::identity(), None);
+    let full = pm.width() as f32;
+    let full_h = pm.height() as f32;
+    if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, full, full_h) {
+        pm.fill_rect(rect, &veil, Transform::identity(), None);
+    }
     let b = std::sync::Arc::new(pm);
     *cache = Some(b.clone());
     b
@@ -712,8 +717,18 @@ impl Flyout {
     }
 
     fn spot_at(&self, p: (f32, f32)) -> Option<Spot> {
-        // last drawn wins: rows first, buttons inside them after
-        self.spots.iter().rev().find(|s| p.0 >= s.x && p.0 < s.x + s.w && p.1 >= s.y && p.1 < s.y + s.h).copied()
+        // last drawn wins: rows first, buttons inside them after. Guard the NaN/inverted case:
+        // a spot with w or h <= 0 or a non-finite coordinate must never match.
+        self.spots.iter().rev().find(|s| {
+            s.w > 0.0
+                && s.h > 0.0
+                && p.0.is_finite()
+                && p.1.is_finite()
+                && p.0 >= s.x
+                && p.0 < s.x + s.w
+                && p.1 >= s.y
+                && p.1 < s.y + s.h
+        }).copied()
     }
 
     fn frac(s: &Spot, p: (f32, f32)) -> f32 {
@@ -770,8 +785,8 @@ impl Flyout {
                     if let Some(s) = self.spots.iter().find(|s| s.id == id).copied() {
                         self.content.release(id, Self::frac(&s, p));
                     }
-                    if self.spot_at(p).is_some_and(|s| s.id == id) {
-                        let s = self.spot_at(p).unwrap();
+                    // look it up once: a second lookup could differ and unwrap() would panic
+                    if let Some(s) = self.spot_at(p).filter(|s| s.id == id) {
                         cmd = self.content.click(id, Self::frac(&s, p));
                     }
                 }
@@ -991,12 +1006,14 @@ impl Flyout {
         let cw = w - 2.0 * padx;
         let max_h = 1000.0; // fits a 1080p screen at 100% under the bar
         let (pw, ph_max) = (((w + 2.0 * MARGIN) * s).ceil() as u32, ((max_h + 2.0 * MARGIN) * s).ceil() as u32);
-        let mut pm = Pixmap::new(pw, ph_max).unwrap();
+        // Allocation failure on a huge panel or screen must not take the app down: skip this frame.
+        let (Some(mut pm), Some(mut scratch)) = (Pixmap::new(pw, ph_max), Pixmap::new(pw, ph_max)) else {
+            return;
+        };
         let (ox, oy) = (MARGIN + padx, MARGIN + pady);
         // panel first at full height guess, then content; redrawn below once the height is known
         let mut spots = Vec::new();
         let ch = {
-            let mut scratch = Pixmap::new(pw, ph_max).unwrap();
             let mut ui = Ui { pm: &mut scratch, s, ox, oy, mouse: self.mouse, pressed: self.press, spots: &mut spots, w: cw, fs: s, still: true };
             self.content.draw(&mut ui)
         };

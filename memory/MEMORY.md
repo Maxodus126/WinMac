@@ -1,0 +1,1 @@
+- [WacOS license](wacos-license.md) — non-open-source; study only, implement features from scratch

@@ -292,7 +292,8 @@ impl Apps {
 
     fn title(&self) -> &'static str {
         match self.cat {
-            Some(c) => t(CATS[c].0),
+            // Defensive: a stale/out-of-range category id must not index past CATS (panic).
+            Some(c) => CATS.get(c).map(|x| t(x.0)).unwrap_or(t("Applications")),
             None => t("Applications"),
         }
     }

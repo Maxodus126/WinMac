@@ -34,7 +34,7 @@ impl BatteryFly {
 
     fn refresh(&self) {
         {
-            let mut r = self.reading.lock().unwrap();
+            let mut r = self.reading.lock().unwrap_or_else(|p| p.into_inner());
             if *r {
                 return;
             }
@@ -42,12 +42,14 @@ impl BatteryFly {
         }
         let (slot, reading, hwnd) = (self.slot.clone(), self.reading.clone(), self.hwnd);
         std::thread::spawn(move || {
+            // Tolerate a poisoned mutex (a prior panic in the worker): recover the value
+            // rather than unwinding into the UI thread. A stale sample is better than a crash.
             let s = {
-                let mut m = METER.lock().unwrap();
+                let mut m = METER.lock().unwrap_or_else(|p| p.into_inner());
                 m.get_or_insert_with(PowerMeter::new).read()
             };
-            *slot.lock().unwrap() = Some(s);
-            *reading.lock().unwrap() = false;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(s);
+            *reading.lock().unwrap_or_else(|p| p.into_inner()) = false;
             unsafe {
                 let _ = PostMessageW(HWND(hwnd as *mut _), WM_FLY_DATA, WPARAM(0), LPARAM(0));
             }
@@ -111,7 +113,7 @@ impl Content for BatteryFly {
         self.refresh();
     }
     fn data(&mut self) {
-        if let Some(s) = self.slot.lock().unwrap().take() {
+        if let Some(s) = self.slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
             self.sample = Some(s);
         }
     }

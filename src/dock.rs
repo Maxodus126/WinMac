@@ -17,21 +17,22 @@ use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
-use windows::Win32::UI::Shell::{SHAppBarMessage, SHEmptyRecycleBinW, ABE_BOTTOM, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
+use windows::Win32::UI::Shell::{SHAppBarMessage, SHEmptyRecycleBinW, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::badges;
 use crate::config::{Config, APPS_ITEM};
+use crate::display::Display;
 use crate::gfx::{self, Font, Surface};
 use crate::menu::{self, Anchor, Entry};
 use crate::shell::{self, eq_ic, AppWindow, Shell};
 use crate::{push, taskbar, tile, Ev};
 
 // macOS: the glass above and below a tile is ~35% of the tile (tiles fill ~88% of their box)
-const PAD: f64 = 13.0;
-const BOTTOM_GAP: f64 = 6.0;
-const RADIUS: f64 = 24.0;
-const PAD_X: f64 = 8.0;
+const PAD: f64 = 6.0;
+const BOTTOM_GAP: f64 = 3.0;
+const RADIUS: f64 = 16.0;
+const PAD_X: f64 = 5.0;
 const CB_APPBAR: u32 = WM_APP + 1;
 const TIMER_REFRESH: usize = 1;
 const TIMER_DISPLAY: usize = 2;
@@ -82,7 +83,7 @@ pub enum DockEv {
 /// What the dock wants done by the app around it.
 pub enum Act {
     Quit,
-    Fullscreen(bool),
+    Fullscreen,
     /// minimize these windows (the genie animates `fg` into its icon first)
     Minimize { fg: HWND, wins: Vec<HWND> },
     /// restore these minimized windows (back to front) and bring `front` forward
@@ -101,8 +102,8 @@ fn fresh_used(layer: &Option<([u32; 6], Pixmap, i32, i32)>, key: &[u32; 6]) -> b
 }
 
 
-fn ev(e: DockEv) {
-    push(Ev::Dock(e));
+fn ev(h: HWND, e: DockEv) {
+    push(Ev::Dock(h, e));
 }
 
 unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -113,40 +114,40 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                 let _ = TrackMouseEvent(&mut t);
                 TRACKING.set(true);
             }
-            ev(DockEv::Wake);
+            ev(h, DockEv::Wake);
         }
         WM_MOUSELEAVE => {
             TRACKING.set(false);
-            ev(DockEv::Wake);
+            ev(h, DockEv::Wake);
         }
-        WM_LBUTTONDOWN => ev(DockEv::Down),
-        WM_LBUTTONUP => ev(DockEv::Up),
-        WM_RBUTTONUP => ev(DockEv::RightUp),
+        WM_LBUTTONDOWN => ev(h, DockEv::Down),
+        WM_LBUTTONUP => ev(h, DockEv::Up),
+        WM_RBUTTONUP => ev(h, DockEv::RightUp),
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
         WM_TIMER => match w.0 {
-            TIMER_REFRESH => ev(DockEv::Refresh),
-            TIMER_DISPLAY => ev(DockEv::DisplaySettled),
-            TIMER_EDGE => ev(DockEv::Edge),
-            TIMER_TOASTS => ev(DockEv::Toasts),
+            TIMER_REFRESH => ev(h, DockEv::Refresh),
+            TIMER_DISPLAY => ev(h, DockEv::DisplaySettled),
+            TIMER_EDGE => ev(h, DockEv::Edge),
+            TIMER_TOASTS => ev(h, DockEv::Toasts),
             TIMER_BACKDROP_RECHECK => {
                 let _ = KillTimer(h, TIMER_BACKDROP_RECHECK);
-                ev(DockEv::BackdropRecheck);
+                ev(h, DockEv::BackdropRecheck);
             }
             TIMER_BACKDROP => {
                 let _ = KillTimer(h, TIMER_BACKDROP);
-                ev(DockEv::BackdropTick);
+                ev(h, DockEv::BackdropTick);
             }
             _ => {}
         },
-        WM_DISPLAYCHANGE => ev(DockEv::DisplayChanged),
+        WM_DISPLAYCHANGE => ev(h, DockEv::DisplayChanged),
         // we size the window ourselves on every frame; don't let Windows apply its suggested rect
         WM_DPICHANGED => {
-            ev(DockEv::DisplayChanged);
+            ev(h, DockEv::DisplayChanged);
             return LRESULT(0);
         }
-        WM_SETTINGCHANGE if w.0 == SPI_SETDESKWALLPAPER => ev(DockEv::Wallpaper),
-        CB_APPBAR => ev(DockEv::AppBar(w.0, l.0)),
-        crate::backdrop::WM_BACKDROP => ev(DockEv::Backdrop(w.0 == 1)),
+        WM_SETTINGCHANGE if w.0 == SPI_SETDESKWALLPAPER => ev(h, DockEv::Wallpaper),
+        CB_APPBAR => ev(h, DockEv::AppBar(w.0, l.0)),
+        crate::backdrop::WM_BACKDROP => ev(h, DockEv::Backdrop(w.0 == 1)),
         // the session is ending and we may not get another chance: put the taskbar back now
         WM_ENDSESSION if w.0 != 0 => {
             taskbar::restore(false);
@@ -156,7 +157,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
         // HSHELL_FLASH: an app flashes its taskbar button (FlashWindowEx) asking for attention
         m if m != 0 && m == SHELLHOOK.get() => {
             if w.0 & 0x7FFF == HSHELL_FLASH & 0x7FFF {
-                ev(DockEv::Flash(l.0));
+                ev(h, DockEv::Flash(l.0));
             }
         }
         _ => {}
@@ -321,11 +322,25 @@ fn now_secs(t: Instant, base: Instant) -> f64 {
     t.saturating_duration_since(base).as_secs_f64()
 }
 
+/// Parse "#RRGGBB" → (r, g, b); None for anything else.
+fn tint_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let h = hex.trim_start_matches('#');
+    if h.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
 // ------------------------------------------------------------------ the dock
 
 pub struct Dock {
     pub hwnd: HWND,
     pub cfg: Config,
+    pub display: Display,
+    pub config_dirty: bool,
     shell: Shell,
     pub dpi: f64,
     screen_w: f64,
@@ -333,6 +348,15 @@ pub struct Dock {
     fit_b: f64,
     win_w: f64,
     win_h: f64,
+    /// bottom edge the dock is anchored to: the AppBar strip returned by ABM_QUERYPOS
+    /// (above the Windows taskbar when it is visible), or the screen bottom otherwise.
+    win_bottom: f64,
+    /// dock screen edge: "bottom" (default), "left" or "right".
+    dock_position: String,
+    /// Cached drop shadow for the dock plate (offset + alpha premultiplied).
+    dock_shadow: Option<(Pixmap, i32, i32)>,
+    /// Plate height at which the shadow was last rebuilt.
+    shadow_plate_h: u32,
     items: Vec<Item>,
     icons: HashMap<String, (String, Option<Rc<Pixmap>>)>, // name + icon per item key, kept across app restarts
     surface: Option<Surface>,
@@ -384,6 +408,11 @@ pub struct Dock {
     look_pending: bool,
     toasts: Vec<(String, i64)>,
     toast_job: Option<Arc<Mutex<Option<Vec<(String, i64)>>>>>,
+    // profiling (only active when WINMAC_PROFILE is set)
+    pf_last: Instant,
+    pf_n: u32,
+    pf_max: f64,
+    pf_sum: f64,
 }
 
 impl Dock {
@@ -397,21 +426,32 @@ impl Dock {
         self.b() + PAD * 2.0
     }
     fn win_x(&self) -> f64 {
-        (self.screen_w - self.win_w) / 2.0
+        match self.cfg.dock_position.as_str() {
+            "left" => self.display.rect.left as f64 / self.dpi,
+            "right" => (self.display.rect.right as f64 / self.dpi) - self.win_w,
+            _ => self.display.rect.left as f64 / self.dpi + (self.screen_w - self.win_w) / 2.0,
+        }
     }
     fn win_y(&self) -> f64 {
-        self.screen_h - self.win_h
+        match self.cfg.dock_position.as_str() {
+            "left" | "right" => self.display.rect.top as f64 / self.dpi + (self.screen_h - self.win_h) / 2.0,
+            _ => self.win_bottom - self.win_h,
+        }
     }
     fn icon_px(&self) -> u32 {
-        (self.cfg.icon_size * self.cfg.magnify * self.dpi).ceil() as u32
+        // icon_size is clamped to >=16 on load, but stay defensive: a 0 px pixmap
+        // would cascade into panics in icon decoding.
+        let size = (self.cfg.icon_size.max(1.0) * self.cfg.magnify * self.dpi).ceil();
+        (size.max(1.0) as u32).min(4096)
     }
 
-    pub fn new(hwnd: HWND, cfg: Config) -> Dock {
-        let (screen_w, screen_h, dpi) = primary_screen();
+    pub fn new(hwnd: HWND, cfg: Config, display: Display) -> Dock {
+        let (screen_w, screen_h, dpi) = display.dimensions();
         let now = Instant::now();
+        let dock_position = cfg.dock_position.clone();
         Dock {
-            hwnd, cfg, shell: Shell::default(), dpi, screen_w, screen_h, fit_b: f64::MAX,
-            win_w: 1.0, win_h: 1.0, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
+            hwnd, cfg, display, config_dirty: false, shell: Shell::default(), dpi, screen_w, screen_h, fit_b: f64::MAX,
+            win_w: 1.0, win_h: 1.0, win_bottom: screen_h, dock_position, items: Vec::new(), icons: HashMap::new(), surface: None, drawn: Vec::new(), frost: None, glass: None, light_glass: false, backdrop: crate::backdrop::Backdrop::new(hwnd), backdrop_gen: 0, bd_due: (false, false), bd_last: 0.0, bd_timer: false, behind: None, glass_layer: None, over: None, wall_strip: None,
             label: None, label_alpha: 0.0, menu_up: false, drag_files: false, label_at: (0.0, 0.0, 0.0, 0.0), hovered: None, plate_left: 0.0,
             plate_w: 0.0, seps: Vec::new(), running_now: HashMap::new(), clock: now, last_t: 0.0, awake: false, hidden: false,
             sig: String::new(), refreshes: 0, appbar: false,
@@ -419,6 +459,8 @@ impl Dock {
             pressed: None, press_pt: (0.0, 0.0), dragging: false, drag_out: false, drag_x: 0.0,
             last_app: unsafe { GetForegroundWindow() },
             seen: None, toasts: Vec::new(), toast_job: None, look_pending: false,
+            dock_shadow: None, shadow_plate_h: 0,
+            pf_last: now, pf_n: 0, pf_max: 0.0, pf_sum: 0.0,
         }
     }
 
@@ -445,13 +487,20 @@ impl Dock {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
-        if !self.cfg.auto_hide {
+        // When HideTaskbar is on the dock replaces the Windows taskbar, so it MUST reserve
+        // its strip even in auto-hide mode; otherwise maximized windows extend under it.
+        if self.cfg.hide_taskbar || !self.cfg.auto_hide {
             self.reserve();
         }
     }
 
     pub fn shutdown(&mut self) {
+        crate::preview::hide();
         self.unreserve();
+        // persist any badge "seen" marks that were deferred during the session
+        if let Some(seen) = self.seen.as_mut() {
+            seen.flush();
+        }
         unsafe {
             let _ = DeregisterShellHookWindow(self.hwnd);
         }
@@ -471,28 +520,84 @@ impl Dock {
             cbSize: std::mem::size_of::<APPBARDATA>() as u32,
             hWnd: self.hwnd,
             uCallbackMessage: CB_APPBAR,
-            uEdge: ABE_BOTTOM,
+            uEdge: match self.cfg.dock_position.as_str() {
+                "left" => ABE_LEFT,
+                "right" => ABE_RIGHT,
+                _ => ABE_BOTTOM,
+            },
             ..Default::default()
         }
     }
 
-    /// Reserve the strip at the bottom so maximized windows stop above the dock.
-    fn reserve(&mut self) {
-        let t = ((self.plate_h() + BOTTOM_GAP * 2.0) * self.dpi).round() as i32;
-        let (sw, sh) = ((self.screen_w * self.dpi).round() as i32, (self.screen_h * self.dpi).round() as i32);
+    /// Reserve the strip at the chosen edge so maximized windows stop above the dock.
+    pub fn reserve(&mut self) {
+        // the strip the dock visually occupies: the plate plus the small gap beside/below it
+        let t = ((self.plate_h() + BOTTOM_GAP) * self.dpi).round() as i32;
         let mut d = self.appbar_data();
         unsafe {
             if !self.appbar {
-                SHAppBarMessage(ABM_NEW, &mut d);
+                if SHAppBarMessage(ABM_NEW, &mut d) == 0 {
+                    return; // refused (e.g. we run at low integrity); maximized windows will slide under us
+                }
                 self.appbar = true;
             }
-            d.rc.left = 0;
-            d.rc.right = sw;
-            d.rc.top = sh - t;
-            d.rc.bottom = sh;
-            SHAppBarMessage(ABM_QUERYPOS, &mut d);
-            d.rc.top = d.rc.bottom - t;
+            // anchor the reserved strip to THIS dock's monitor (identically to the old
+            // primary-only math when the monitor origin is (0,0))
+            match self.cfg.dock_position.as_str() {
+                "left" => {
+                    d.rc.left = self.display.rect.left;
+                    d.rc.right = d.rc.left + t;
+                    d.rc.top = self.display.rect.top;
+                    d.rc.bottom = self.display.rect.bottom;
+                }
+                "right" => {
+                    d.rc.right = self.display.rect.right;
+                    d.rc.left = d.rc.right - t;
+                    d.rc.top = self.display.rect.top;
+                    d.rc.bottom = self.display.rect.bottom;
+                }
+                _ => {
+                    d.rc = self.display.bottom_strip(t);
+                }
+            }
+            if self.cfg.hide_taskbar && self.cfg.dock_position == "bottom" {
+                // HideTaskbar: dock spans the full bottom edge so it visually replaces the
+                // Windows taskbar. Don't query Explorer's position (that would stop at the
+                // taskbar's strip); just register us at the bottom edge.
+                self.win_bottom = self.display.rect.bottom as f64 / self.dpi;
+                self.win_h = self.display.rect.bottom as f64 / self.dpi - self.display.rect.top as f64 / self.dpi;
+            } else if self.cfg.dock_position == "bottom" {
+                // Ask Explorer where we actually sit (above any existing AppBar, e.g. the taskbar),
+                // then register that strip.
+                SHAppBarMessage(ABM_QUERYPOS, &mut d);
+                // capture the effective bottom BEFORE SETPOS, so the window is anchored to the
+                // reserved strip, not the full screen bottom.
+                self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            } else if self.cfg.dock_position == "left" || self.cfg.dock_position == "right" {
+                SHAppBarMessage(ABM_QUERYPOS, &mut d);
+                self.win_bottom = d.rc.bottom as f64 / self.dpi;
+            }
             SHAppBarMessage(ABM_SETPOS, &mut d);
+        }
+    }
+
+    /// Explorer restarted: our AppBar registration died with it, so re-register and re-claim the strip.
+    pub fn shell_restarted(&mut self) {
+        self.appbar = false;
+        // not while hidden for fullscreen: a re-registration here would void the release in
+        // set_fullscreen_hidden and shrink the work area under a fullscreen app again
+        if self.should_reserve() {
+            self.reserve();
+        }
+    }
+
+    /// Re-claim the reserved strip if the AppBar registration was lost (Explorer restart).
+    pub fn ensure_reservation(&mut self) {
+        // not while hidden for fullscreen: main.rs calls us on every Refresh, which keeps firing (every
+        // 3 s) while the dock is hidden, so without this guard the strip would be re-registered under a
+        // fullscreen app and the work area would never release
+        if !self.appbar && self.should_reserve() {
+            self.reserve();
         }
     }
 
@@ -508,20 +613,52 @@ impl Dock {
 
     // -------------------------------------------------------------- auto-hide
 
+    /// The dock is not hidden for fullscreen (i.e. it is safe to (re)register its AppBar strip).
+    pub fn is_visible(&self) -> bool {
+        !self.hidden
+    }
+
     pub fn auto_hide(&self) -> bool {
         self.cfg.auto_hide
+    }
+
+    /// Should this dock hold an AppBar reservation? When HideTaskbar is on the dock replaces the
+    /// Windows taskbar so it must reserve its strip even in auto-hide mode; otherwise maximized
+    /// windows extend under it. Never reserve while hidden for fullscreen — that would void the
+    /// release in set_fullscreen_hidden and shrink the work area under a fullscreen app.
+    pub fn should_reserve(&self) -> bool {
+        !self.hidden && (self.cfg.hide_taskbar || !self.cfg.auto_hide)
+    }
+
+    fn persist(&mut self) {
+        self.cfg.save();
+        self.config_dirty = true;
     }
 
     /// Change a setting owned by another part of the app (the menu bar) through the dock's config, so the
     /// dock's next save doesn't write the old value back.
     pub fn update_config(&mut self, f: impl FnOnce(&mut Config)) -> &Config {
         f(&mut self.cfg);
-        self.cfg.save();
+        self.persist();
         &self.cfg
     }
 
     pub fn config(&self) -> &Config {
         &self.cfg
+    }
+
+    /// The Settings panel changed the config on another dock (or this one): adopt the new config and redo
+    /// whatever it changes. `relayout` is false while a size slider is still being dragged.
+    pub fn mirror_config(&mut self, cfg: &Config, relayout: bool) {
+        let old = std::mem::replace(&mut self.cfg, cfg.clone());
+        self.settings_changed(&old, relayout);
+        if old.pinned != cfg.pinned || old.recent != cfg.recent || old.icon_overrides != cfg.icon_overrides {
+            self.refresh(false);
+            for i in 0..self.items.len() {
+                let key = &self.items[i].key;
+                if old.icon_overrides.get(key) != cfg.icon_overrides.get(key) { self.reload_icon(i); }
+            }
+        }
     }
 
     /// The Settings panel changed the config (already saved): redo what depends on what changed. `relayout`
@@ -563,26 +700,50 @@ impl Dock {
 
     pub fn set_auto_hide(&mut self, on: bool) {
         self.cfg.auto_hide = on;
-        self.cfg.save();
+        self.persist();
         unsafe {
             if on {
                 self.unreserve();
                 SetTimer(self.hwnd, TIMER_EDGE, 60, None);
             } else {
-                self.reserve();
+                // not while hidden for fullscreen; the strip is re-claimed when fullscreen exits
+                if !self.hidden {
+                    self.reserve();
+                }
                 let _ = KillTimer(self.hwnd, TIMER_EDGE);
             }
         }
         self.wake();
     }
 
-    /// The pointer is on the bottom edge of the primary screen (where the hidden dock waits).
+    /// The pointer is on the bottom edge of this screen (where the hidden dock waits).
     fn at_bottom_edge(&self) -> bool {
         let mut p = POINT::default();
         unsafe {
             let _ = GetCursorPos(&mut p);
         }
-        p.y as f64 >= (self.screen_h * self.dpi).round() - 2.0 && p.x >= 0 && (p.x as f64) < (self.screen_w * self.dpi).round()
+        self.display.at_bottom(p)
+    }
+
+    /// True when a foreground (non-ours) window's rect overlaps the dock's screen area. Smart-hide
+    /// uses this to keep the dock away while a window covers it.
+    fn covered_by_window(&self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.0.is_null() || crate::shell::window_pid(fg) == std::process::id() {
+                return false;
+            }
+            let mut r = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(fg, &mut r).is_err() {
+                return false;
+            }
+            let dx = (self.win_x() * self.dpi) as i32;
+            let dy = ((self.win_bottom - self.win_h) * self.dpi) as i32;
+            let dw = (self.win_w * self.dpi) as i32;
+            let dh = (self.win_h * self.dpi) as i32;
+            !(r.right <= dx || r.left >= dx + dw || r.bottom <= dy || r.top >= dy + dh)
+        }
     }
 
     /// Show the dock for a moment even when hidden: a genie aiming at it, an app asking for attention.
@@ -603,13 +764,13 @@ impl Dock {
 
     // -------------------------------------------------------------- display changes
 
-    fn apply_display(&mut self) {
+    pub fn apply_display(&mut self) {
         self.drawn.clear();
-        (self.screen_w, self.screen_h, self.dpi) = primary_screen();
+        (self.screen_w, self.screen_h, self.dpi) = self.display.dimensions();
         self.fit_b = f64::MAX;
         self.fit_icons();
-        if !self.cfg.auto_hide {
-            self.reserve();
+        if self.should_reserve() {
+            self.reserve(); // not while hidden for fullscreen: we'd void the release on entering it
         }
         self.fit_window();
         self.load_frost();
@@ -619,9 +780,20 @@ impl Dock {
         for i in 0..self.items.len() {
             let it = &self.items[i];
             let icon = if it.trash {
-                shell::icon(TRASH, px).map(Rc::new)
+                let raw = shell::icon(TRASH, px);
+                if self.cfg.icon_tiles {
+                    raw.and_then(|r| tile::make(&r, px)).map(Rc::new).or_else(|| shell::icon(TRASH, px).map(Rc::new))
+                } else {
+                    raw.map(Rc::new)
+                }
             } else if it.stack {
-                downloads_dir().and_then(|d| shell::icon(&d, px)).map(Rc::new)
+                downloads_dir().and_then(|d| shell::icon(&d, px)).and_then(|raw| {
+                    if self.cfg.icon_tiles {
+                        tile::make(&raw, px)
+                    } else {
+                        None
+                    }
+                }).map(Rc::new)
             } else {
                 it.launch.clone().and_then(|src| self.app_icon(&it.key, &src, it.exe.clone().as_deref()))
             };
@@ -666,14 +838,74 @@ impl Dock {
             SetTimer(self.hwnd, TIMER_REFRESH, if on { 3000 } else { 700 }, None);
         }
         if on {
+            // Release the AppBar reservation so a fullscreen / borderless-fullscreen app can cover the
+            // whole monitor. If we only hid the window and kept the reservation, the work area stays
+            // shrunk: maximized or borderless windows size to it and look cut off at the bottom.
+            self.unreserve();
             self.awake = false;
             self.surface = None; // its pixels are big; it comes back on the next frame
         } else {
+            if self.should_reserve() {
+                self.reserve(); // re-claim the reserved strip
+            }
             self.wake();
         }
     }
 
     // -------------------------------------------------------------- items
+
+    /// Apply the configured icon style (dark / clear / tinted) to the icon pixels already drawn into
+    /// `pm` at (x, y) sized `s`. `default` is a no-op. A free fn so it can run on a pixmap borrowed
+    /// from `self` without a conflicting `self` borrow.
+    fn apply_icon_style_free(style: &str, pm: &mut tiny_skia::PixmapMut, x: f64, y: f64, s: f64) {
+        if style == "default" {
+            return;
+        }
+        let w = pm.width() as usize;
+        let x0 = x.max(0.0) as usize;
+        let y0 = y.max(0.0) as usize;
+        let x1 = ((x + s).min(pm.width() as f64)) as usize;
+        let y1 = ((y + s).min(pm.height() as f64)) as usize;
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (ar, ag, ab) = (crate::flyout::ACCENT.0 as u16, crate::flyout::ACCENT.1 as u16, crate::flyout::ACCENT.2 as u16);
+        let px = pm.pixels_mut();
+        for yy in y0..y1 {
+            for xx in x0..x1 {
+                let p = &mut px[yy * w + xx];
+                let a = p.alpha();
+                if a == 0 {
+                    continue;
+                }
+                let (r, g, b) = (p.red() as u16, p.green() as u16, p.blue() as u16);
+                match style {
+                    "dark" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            (r * 150 / 255) as u8, (g * 150 / 255) as u8, (b * 150 / 255) as u8, a,
+                        ).unwrap();
+                    }
+                    "clear" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            (r + (255 - r) * 110 / 255) as u8,
+                            (g + (255 - g) * 110 / 255) as u8,
+                            (b + (255 - b) * 110 / 255) as u8,
+                            a,
+                        ).unwrap();
+                    }
+                    "tinted" => {
+                        *p = tiny_skia::PremultipliedColorU8::from_rgba(
+                            ((r * 130 + ar * 125) / 255) as u8,
+                            ((g * 130 + ag * 125) / 255) as u8,
+                            ((b * 130 + ab * 125) / 255) as u8,
+                            a,
+                        ).unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 
     /// The shell icon for an item, put on a squircle tile when tiles are on (fetched big, tiled at draw size).
     fn app_icon(&self, key: &str, spec: &str, exe: Option<&str>) -> Option<Rc<Pixmap>> {
@@ -928,7 +1160,10 @@ impl Dock {
         let next = if b >= self.cfg.icon_size { f64::MAX } else { b.floor() };
         if next != self.fit_b {
             self.fit_b = next;
-            if !self.cfg.auto_hide {
+            // not while hidden for fullscreen: apply_display -> fit_icons runs on WM_DISPLAYCHANGE,
+            // which is broadcast to hidden windows too, and a reserve here would shrink the work area
+            // under the fullscreen app again
+            if self.should_reserve() {
                 self.reserve(); // the plate got shorter or taller
             }
             for it in &mut self.items {
@@ -940,10 +1175,27 @@ impl Dock {
     /// The window only needs to be as wide as a fully magnified dock plus room for the label.
     fn fit_window(&mut self) {
         let (b, gap) = (self.b(), self.gap());
-        self.win_w = self
-            .screen_w
-            .min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0);
-        self.win_h = BOTTOM_GAP + self.plate_h() + b * (self.cfg.magnify - 1.0) + 64.0;
+        match self.cfg.dock_position.as_str() {
+            "left" | "right" => {
+                // Vertical dock: width is just the plate width; height spans the screen edge to edge
+                // (replacing the taskbar strip when hiding it) or fits the magnified items.
+                self.win_w = self.plate_h();
+                self.win_h = if self.cfg.hide_taskbar {
+                    self.screen_h
+                } else {
+                    self.screen_h.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
+                };
+            }
+            _ => {
+                // Horizontal dock along the bottom edge.
+                self.win_w = if self.cfg.hide_taskbar {
+                    self.screen_w
+                } else {
+                    self.screen_w.min(self.items.len() as f64 * (b * self.cfg.magnify + gap) + PAD_X * 2.0 + 2.0 * gap + 320.0)
+                };
+                self.win_h = self.plate_h() + b * (self.cfg.magnify - 1.0) + 8.0;
+            }
+        }
     }
 
     // -------------------------------------------------------------- badges
@@ -1050,6 +1302,7 @@ impl Dock {
     }
 
     fn on_down(&mut self) {
+        crate::preview::hide();
         let p = self.cursor();
         self.press_pt = p;
         self.pressed = self.item_at(p.0).map(|i| self.items[i].key.clone());
@@ -1297,7 +1550,13 @@ impl Dock {
         let chosen = self.popup(&entries, anchor, dpi);
         self.wake();
         let d = chosen.and_then(|c| acts.get_mut(c).and_then(|a| a.take()))?;
-        let i = idx.unwrap_or(0);
+        // The modal menu ran a nested message loop; if an item was animating out and got removed
+        // meanwhile, `idx` may be stale. Don't index past the current item list.
+        let i = match idx {
+            Some(i) if i < self.items.len() => i,
+            Some(_) => return None,
+            None => 0,
+        };
         match d {
             Do::Hide => self.set_auto_hide(!self.cfg.auto_hide),
             Do::QuitDock => return Some(Act::Quit),
@@ -1497,11 +1756,87 @@ impl Dock {
 
     // -------------------------------------------------------------- frame
 
+    /// Drive the hover window preview: offer it every frame for the hovered running item (the preview skips
+    /// identical repeats and re-shows after it auto-hides itself). Hide it when the hovered item stops
+    /// running. When nothing is hovered the preview manages its own life via its cursor poll, so moving the
+    /// mouse up onto the preview does not close it.
+    fn update_preview(&mut self) {
+        match self.hovered.and_then(|i| self.items.get(i)) {
+            Some(it) if it.running() && !self.menu_up && self.pressed.is_none() && !self.dragging => {
+                let dpi = self.dpi;
+                let (wx, wy) = (self.win_x(), self.win_y() + self.slide());
+                let plate_top = self.win_h - BOTTOM_GAP - self.plate_h();
+                // keep-alive zone for the preview: the plate plus the icon row above it (in the window frame),
+                // NOT the whole window rect — the window can span the screen in Hide-Taskbar mode, which
+                // would otherwise pin the preview open forever.
+                let plate_bottom = self.win_h - BOTTOM_GAP;
+                let icon_top = plate_bottom - self.plate_h() - self.items.iter().map(|i| i.size).fold(self.b(), f64::max) - PAD;
+                let icon_spec = match (&it.aumid, &it.exe) {
+                    (Some(a), _) => Some(format!("shell:AppsFolder\\{a}")),
+                    (None, Some(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let req = crate::preview::ShowReq {
+                    wins: it.wins.iter().map(|w| w.hwnd.0 as isize).collect(),
+                    name: it.name.clone(),
+                    icon_spec,
+                    cx: ((wx + it.x + it.size / 2.0) * dpi).round() as i32,
+                    bottom: ((wy + plate_top) * dpi).round() as i32,
+                    dock: (
+                        ((wx + self.plate_left) * dpi).round() as i32,
+                        ((wy + icon_top) * dpi).round() as i32,
+                        ((wx + self.plate_left + self.plate_w) * dpi).round() as i32,
+                        ((wy + plate_bottom) * dpi).round() as i32,
+                    ),
+                };
+                crate::preview::show(req);
+            }
+            Some(_) => {
+                // hovered a non-running item: close any preview
+                crate::preview::hide();
+            }
+            None => {}
+            // not over the dock: leave it to the preview's own cursor poll
+        }
+    }
+
+    /// When WINMAC_PROFILE is set, append a frame-time line every 120 frames so a slow dock loop is visible
+    /// in %APPDATA%\WinMac\perf.log (avg/max ms per frame).
+    fn profile_frame(&mut self) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var_os("WINMAC_PROFILE").is_some()) {
+            return;
+        }
+        let dt = self.pf_last.elapsed().as_secs_f64();
+        self.pf_sum += dt;
+        self.pf_n += 1;
+        if dt > self.pf_max {
+            self.pf_max = dt;
+        }
+        if self.pf_n % 120 == 0 {
+            let line = format!(
+                "dock n={} avg={:.3}ms max={:.3}ms\n",
+                self.pf_n,
+                self.pf_sum / self.pf_n as f64 * 1000.0,
+                self.pf_max * 1000.0
+            );
+            if let Ok(dir) = std::fs::create_dir_all(crate::config::dir()) {
+                let _ = dir;
+                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(format!("{}\\perf.log", crate::config::dir())) {
+                    use std::io::Write;
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+        }
+    }
+
     pub fn frame(&mut self) {
         if self.hidden {
             self.awake = false;
+            crate::preview::hide();
             return;
         }
+        self.pf_last = Instant::now();
         if self.pressed.is_some() {
             self.track_drag();
         }
@@ -1526,11 +1861,14 @@ impl Dock {
 
         let kh = self.cfg.ease(dt, 13.0, self.cfg.hide_speed);
         if self.cfg.auto_hide {
+            let covered = self.cfg.smart_hide && self.covered_by_window();
             if hovering || self.dragging || self.pressed.is_some() || self.at_bottom_edge() {
                 self.last_near = now;
             }
-            // linger a moment after the pointer leaves, like macOS
-            let show = now < self.peek_until || now_secs(now, self.last_near) < self.cfg.hide_delay_ms / 1000.0;
+            // linger a moment after the pointer leaves, like macOS; smart hide keeps it away while a
+            // window covers the dock (the pointer can't reach it anyway)
+            let near = now < self.peek_until || now_secs(now, self.last_near) < self.cfg.hide_delay_ms / 1000.0;
+            let show = near && !covered;
             self.hide = approach(self.hide, if show { 0.0 } else { 1.0 }, kh);
         } else {
             self.hide = approach(self.hide, 0.0, kh);
@@ -1614,6 +1952,8 @@ impl Dock {
             x += (b * it.scale + gap) * it.presence;
         }
 
+        self.update_preview();
+
         if self.drag_files {
             // where dropped files can go, in screen px (magnified icons rise above the plate)
             use crate::dropfiles::Zone;
@@ -1641,6 +1981,7 @@ impl Dock {
         }
 
         self.render(plate_top, plate_bottom);
+        self.profile_frame();
 
         // nothing moving and the pointer is away: stop ticking until something wakes us
         let hide_target = if self.cfg.auto_hide && now >= self.peek_until && now_secs(now, self.last_near) >= 0.35 { 1.0 } else { 0.0 };
@@ -1691,6 +2032,8 @@ impl Dock {
             self.surface = Surface::new(pw.max(1), ph.max(1));
             self.drawn.clear();
         }
+        // captured before any &mut of self.* below (icon tint runs on a pixmap borrowed from self)
+        let icon_style = self.cfg.icon_style.clone();
         // the label text is rasterized by GDI at the real pixel size, once per name
         if let Some(i) = self.hovered {
             let name = &self.items[i].name;
@@ -1728,9 +2071,67 @@ impl Dock {
 
         let base = Transform::from_scale(dpi as f32, dpi as f32).pre_translate(0.0, slide as f32);
         let (pl, pt, pwid, phgt) = (self.plate_left as f32, plate_top as f32, self.plate_w as f32, (plate_bottom - plate_top) as f32);
+
+        // Rebuild the dock's drop shadow whenever the plate size changes (icon magnification
+        // changes the plate height). Drawn as a real blurred pill shadow under the plate.
+        let cur_plate = (plate_bottom - plate_top) as u32;
+        if self.dock_shadow.is_none() || self.shadow_plate_h != cur_plate {
+            self.shadow_plate_h = cur_plate;
+            let pad = 12.0;
+            let shadow_w = (pwid as f32 + pad * 2.0).ceil() as u32;
+            let shadow_h = (phgt as f32 + pad * 2.0).ceil() as u32;
+            let mut sp = Pixmap::new(shadow_w, shadow_h).unwrap_or_else(|| Pixmap::new(1, 1).expect("shadow pixmap"));
+            let path = gfx::rrect(pad, pad, pwid, phgt, RADIUS as f32);
+            if let Some(p) = path {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(tiny_skia::Color::from_rgba8(0, 0, 0, 0x40));
+                sp.fill_path(&p, &paint, FillRule::Winding, Transform::from_translate(-pad as f32, -pad as f32), None);
+                gfx::blur(&mut sp, 10.0);
+                self.dock_shadow = Some((sp, -pad as i32, -pad as i32));
+            }
+        }
+
+        // Drop shadow under the dock plate: a real blurred shadow so the dock reads as floating
+        // above the wallpaper instead of pasted flat on top of it. Drawn once per plate resize.
+        // Config `DockShadow` can turn it off (off removes any shadow band bleeding over app windows).
+        if self.cfg.dock_shadow {
+            if let Some((shadow_px, shadow_ox, shadow_oy)) = &self.dock_shadow {
+                let ox = ((pl - 12.0) * dpi as f32).round() as i32 + shadow_ox;
+                let oy = ((pt + slide as f32 - 12.0) * dpi as f32).round() as i32 + shadow_oy;
+                gfx::blit_over(&mut pm, shadow_px, ox, oy);
+            }
+        }
         let plate = gfx::rrect(pl, pt, pwid, phgt, RADIUS as f32);
         // colours are (b, g, r, a): the surface is BGRA
         let white = |a: u8| Color::from_rgba8(255, 255, 255, a);
+
+        // When HideTaskbar is on, cover the Windows taskbar with an opaque band next to the plate.
+        // The taskbar itself stays registered, so Explorer keeps a valid work area and maximized
+        // windows still stop above the dock. For a bottom dock the band hangs below the plate;
+        // for a side dock it hangs beside the plate.
+        if self.cfg.hide_taskbar {
+            let band = match self.cfg.dock_position.as_str() {
+                "left" => Rect::from_xywh(0.0, 0.0, self.plate_left as f32, self.win_h as f32),
+                "right" => Rect::from_xywh(
+                    (self.plate_left + self.plate_w) as f32,
+                    0.0,
+                    self.win_w as f32 - (self.plate_left + self.plate_w) as f32,
+                    self.win_h as f32,
+                ),
+                _ => Rect::from_xywh(
+                    0.0,
+                    plate_bottom as f32,
+                    self.win_w as f32,
+                    (self.win_h as f32 - plate_bottom as f32).max(0.0),
+                ),
+            };
+            if let Some(band) = band {
+                let mut paint = Paint::default();
+                paint.set_color(Color::from_rgba8(0x1C, 0x1C, 0x1E, 255));
+                pm.fill_rect(band, &paint, base, None);
+            }
+        }
 
         let mut has_glass = false;
         if let Some(plate) = &plate {
@@ -1785,7 +2186,7 @@ impl Dock {
                         b.draw(region, &mut comp);
                     }
                 }
-                gfx::soften(&mut comp);
+                gfx::blur(&mut comp, 10.0); // real frost: 10 DIP blur behind the dock plate
                 Some(comp)
             }) };
             if let Some(c) = fresh {
@@ -1854,6 +2255,18 @@ impl Dock {
                 paint.shader = g;
                 pm.stroke_path(&rim, &paint, &hair, base, None);
             }
+            // configurable tint over the whole plate (off by default)
+            if self.cfg.glass_opacity > 0.001 {
+                if let Some(rgb) = tint_rgb(&self.cfg.glass_tint) {
+                    let a = ((self.cfg.glass_opacity.clamp(0.0, 1.0) * 255.0).round()) as u8;
+                    if a > 0 {
+                        let mut tp = Paint::default();
+                        tp.anti_alias = true;
+                        tp.set_color(Color::from_rgba8(rgb.2, rgb.1, rgb.0, a));
+                        pm.fill_path(plate, &tp, FillRule::Winding, base, None);
+                    }
+                }
+            }
         }
         for &sx in &self.seps {
             if let Some(r) = Rect::from_xywh(sx as f32, pt + 11.0, 1.0, phgt - 22.0) {
@@ -1904,6 +2317,7 @@ impl Dock {
                 let tf = base.pre_translate(ix as f32, iy as f32).pre_scale(s, s);
                 let pp = PixmapPaint { opacity: opacity as f32, quality: FilterQuality::Bilinear, ..Default::default() };
                 pm.draw_pixmap(0, 0, ic.as_ref().as_ref(), &pp, tf, None);
+                Self::apply_icon_style_free(&icon_style, &mut pm, ix, iy, it.size);
             }
             let a = it.dot * it.presence;
             if a > 0.01 {
@@ -2009,10 +2423,16 @@ impl Dock {
                     crate::ensure_no_activate(self.hwnd);
                     self.refresh(false);
                     // safety net for window changes no event told us about
-                    ev(DockEv::BackdropRecheck);
+                    ev(self.hwnd, DockEv::BackdropRecheck);
                 }
             }
-            DockEv::Toasts => self.poll_toasts(),
+            DockEv::Toasts => {
+                self.poll_toasts();
+                // cheap: only writes when a badge mark changed since the last flush
+                if let Some(seen) = self.seen.as_mut() {
+                    seen.flush();
+                }
+            }
             DockEv::DragFiles(on) => {
                 self.drag_files = on;
                 if !on {
@@ -2066,11 +2486,13 @@ impl Dock {
                 self.apply_display();
             }
             DockEv::AppBar(ABN_POSCHANGED, _) => {
-                if !self.cfg.auto_hide {
+                // not while hidden for fullscreen: our own ABM_REMOVE in set_fullscreen_hidden fires
+                // ABN_POSCHANGED, which would otherwise re-register the strip we just released
+                if self.should_reserve() {
                     self.reserve();
                 }
             }
-            DockEv::AppBar(ABN_FULLSCREENAPP, on) => return Some(Act::Fullscreen(on != 0)),
+            DockEv::AppBar(ABN_FULLSCREENAPP, _) => return Some(Act::Fullscreen),
             DockEv::AppBar(..) => {}
         }
         None

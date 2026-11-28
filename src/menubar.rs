@@ -4,7 +4,6 @@
 //! behind it, reserved as an AppBar so maximized windows stop under it. Drawn only when something changes.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use tiny_skia::{Color, FillRule, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 use windows::core::w;
@@ -30,6 +29,7 @@ const PAD_X: f64 = 9.0; // inside each button
 const GAP: f64 = 1.0; // between buttons
 const SIDE: f64 = 10.0; // from the screen edges
 const CB_APPBAR: u32 = WM_APP + 21;
+const WM_UPDATE_DONE: u32 = WM_APP + 22;
 const TIMER_TICK: usize = 1;
 const TIMER_DISPLAY: usize = 2;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -48,11 +48,15 @@ pub enum BarEv {
     AppBar(usize, isize),
     Display,
     Wallpaper,
+    /// a background auto-update install finished; take_install() reports the outcome
+    UpdateDone,
 }
 
 /// What the bar asks the app to do.
 pub enum BarAct {
     Quit,
+    /// an update was installed; restart the app to run it
+    Restart,
     ToggleAutoHide,
     Fullscreen(bool),
     /// a menu bar setting was switched; the app saves it to config.json
@@ -77,6 +81,8 @@ pub enum Extra {
     Wifi,
     ControlCenter,
     Calendar,
+    NotificationCenter,
+    DynamicIsland,
     Settings,
     Launchpad,
     Spotlight,
@@ -106,6 +112,9 @@ enum Item {
     Apps,
     Search,
     Cc,
+    Bell,
+    Island,
+    NowPlaying,
     Clock,
 }
 
@@ -257,6 +266,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             return LRESULT(0); // we place ourselves
         }
         CB_APPBAR => push(Ev::Bar(BarEv::AppBar(w.0, l.0))),
+        WM_UPDATE_DONE => push(Ev::Bar(BarEv::UpdateDone)),
         _ => {}
     }
     DefWindowProcW(h, msg, w, l)
@@ -282,6 +292,44 @@ pub fn create_window() -> HWND {
 }
 
 // ------------------------------------------------------------------ the bar
+
+/// Widest the now-playing slot may be (DIPs), so a long title never covers the other bar items.
+const NP_MAX_W: f64 = 300.0;
+
+/// A label that fits `max_w` px (stops appending once it would overflow).
+fn trunc_label(s: &str, max_w: f32, f: Font) -> String {
+    if gfx::measure(s, f).0 as f32 <= max_w {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for ch in s.chars() {
+        let mut cand = out.clone();
+        cand.push(ch);
+        if gfx::measure(&cand, f).0 as f32 > max_w {
+            break;
+        }
+        out = cand;
+    }
+    if out.is_empty() { s.chars().next().map(|c| c.to_string()).unwrap_or_default() } else { out }
+}
+
+/// Signature of the current media session, to know when the now-playing label changed.
+static NP_SIG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn np_sig() -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    if let Some((t, a, p)) = crate::nowplaying::current() {
+        for b in t.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        for b in a.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h ^= p as u64;
+    }
+    h
+}
 
 pub struct MenuBar {
     pub hwnd: HWND,
@@ -392,6 +440,21 @@ impl MenuBar {
         }
     }
 
+    /// Explorer restarted: our AppBar registration died with it, so re-register and re-claim the strip.
+    pub fn shell_restarted(&mut self) {
+        self.appbar = false;
+        if !self.hidden {
+            self.reserve();
+        }
+    }
+
+    /// Re-claim the reserved strip if the AppBar registration was lost (Explorer restart).
+    pub fn ensure_reservation(&mut self) {
+        if !self.appbar && !self.hidden {
+            self.reserve();
+        }
+    }
+
     fn unreserve(&mut self) {
         if self.appbar {
             let mut d = self.appbar_data();
@@ -410,9 +473,12 @@ impl MenuBar {
         self.hidden = on;
         unsafe {
             if on {
+                // Release the top reservation so a fullscreen app covers the whole monitor.
+                self.unreserve();
                 let _ = ShowWindow(self.hwnd, SW_HIDE);
                 let _ = KillTimer(self.hwnd, TIMER_TICK);
             } else {
+                self.reserve(); // re-claim the top strip
                 SetTimer(self.hwnd, TIMER_TICK, 1000, None);
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 self.tick(true);
@@ -490,6 +556,11 @@ impl MenuBar {
                 self.dirty = true;
             }
         }
+        let sig = np_sig();
+        if sig != NP_SIG.load(std::sync::atomic::Ordering::Relaxed) {
+            NP_SIG.store(sig, std::sync::atomic::Ordering::Relaxed);
+            self.dirty = true;
+        }
     }
 
     /// Pick up a new AI usage summary: ring = the limit closest to running out, text = burn rate while busy.
@@ -541,7 +612,7 @@ impl MenuBar {
             }
             BarEv::Up(x) => {
                 let i = self.slot_at(x)?;
-                return self.click(i);
+                return self.click(i, x as f64);
             }
             BarEv::RightUp(x) => {
                 let i = self.slot_at(x)?;
@@ -575,8 +646,44 @@ impl MenuBar {
                 self.load_frost();
                 self.render();
             }
+            BarEv::UpdateDone => {
+                match crate::update::take_install() {
+                    Some(Ok(_)) => return Some(BarAct::Restart),
+                    Some(Err((v, url, e))) => {
+                        if confirm(self.hwnd, &format!(
+                            "WIN MAC {v} could not be installed: {e}.\n\nOpen the release page instead?"
+                        )) {
+                            shell::launch(&url);
+                        }
+                    }
+                    None => {}
+                }
+            }
         }
         self.render();
+        None
+    }
+
+    /// Offer to install an available update: download, checksum-verify, swap the exe, restart.
+    fn offer_update(&self, v: &str, url: &str) -> Option<BarAct> {
+        let ask = format!("WIN MAC {v} is available.\n\nDownload and install it now? The app will restart.");
+        if !confirm(self.hwnd, &ask) {
+            return None;
+        }
+        if !crate::update::begin_install() {
+            inform(self.hwnd, "An update is already being installed.");
+            return None;
+        }
+        let hwnd = self.hwnd.0 as isize;
+        let v = v.to_string();
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            let r = crate::update::install(&v);
+            crate::update::finish_install(r.map(|()| v.clone()).map_err(|e| (v, url, e)));
+            unsafe {
+                let _ = PostMessageW(HWND(hwnd as *mut _), WM_UPDATE_DONE, WPARAM(0), LPARAM(0));
+            }
+        });
         None
     }
 
@@ -608,7 +715,7 @@ impl MenuBar {
     pub fn set_open_extra(&mut self, e: Option<Extra>) {
         let want = e.and_then(|e| {
             self.slots.iter().position(|s| {
-                matches!((s.item, e), (Item::Chevron, Extra::Tray) | (Item::Ai, Extra::Ai) | (Item::Battery, Extra::Battery) | (Item::Net, Extra::Wifi) | (Item::Cc, Extra::ControlCenter) | (Item::Clock, Extra::Calendar) | (Item::Apps, Extra::Launchpad) | (Item::Search, Extra::Spotlight))
+                matches!((s.item, e), (Item::Chevron, Extra::Tray) | (Item::Ai, Extra::Ai) | (Item::Battery, Extra::Battery) | (Item::Net, Extra::Wifi) | (Item::Cc, Extra::ControlCenter) | (Item::Clock, Extra::Calendar) | (Item::Bell, Extra::NotificationCenter) | (Item::Island, Extra::DynamicIsland) | (Item::Apps, Extra::Launchpad) | (Item::Search, Extra::Spotlight))
             })
         });
         if want != self.open {
@@ -627,6 +734,8 @@ impl MenuBar {
             Extra::Wifi => Item::Net,
             Extra::ControlCenter => Item::Cc,
             Extra::Calendar => Item::Clock,
+            Extra::NotificationCenter => Item::Bell,
+            Extra::DynamicIsland => Item::Island,
             Extra::Settings => Item::Logo,
             Extra::Launchpad => Item::Apps,
             Extra::Spotlight => Item::Search,
@@ -647,11 +756,29 @@ impl MenuBar {
         self.slots.iter().position(|s| x >= s.x - GAP && x < s.x + s.w + GAP)
     }
 
-    fn click(&mut self, i: usize) -> Option<BarAct> {
+    fn click(&mut self, i: usize, x: f64) -> Option<BarAct> {
         let s = &self.slots[i];
         let (l, r) = (self.px(s.x), self.px(s.x + s.w));
         match s.item {
             Item::Logo | Item::App | Item::Menu(_) => return self.show_menu(i),
+            Item::NowPlaying => {
+                let s = &self.slots[i];
+                let rel = x - s.x;
+                let btn_left = s.w - PAD_X - 74.0;
+                if rel < btn_left {
+                    crate::nowplaying::focus();
+                } else {
+                    let off = rel - btn_left;
+                    if off < 22.0 {
+                        crate::nowplaying::prev();
+                    } else if off < 26.0 + 22.0 {
+                        crate::nowplaying::toggle();
+                    } else {
+                        crate::nowplaying::next();
+                    }
+                }
+                return None;
+            }
             Item::Chevron => return Some(BarAct::Flyout(Extra::Tray, l, r)),
             Item::Ai => return Some(BarAct::Flyout(Extra::Ai, l, r)),
             Item::Battery => return Some(BarAct::Flyout(Extra::Battery, l, r)),
@@ -660,6 +787,8 @@ impl MenuBar {
             Item::Search => return Some(BarAct::Flyout(Extra::Spotlight, l, r)),
             Item::Apps => return Some(BarAct::Flyout(Extra::Launchpad, l, r)),
             Item::Clock => return Some(BarAct::Flyout(Extra::Calendar, l, r)),
+            Item::Bell => return Some(BarAct::Flyout(Extra::NotificationCenter, l, r)),
+            Item::Island => return Some(BarAct::Flyout(Extra::DynamicIsland, l, r)),
         }
     }
 
@@ -773,10 +902,10 @@ impl MenuBar {
         match d {
             Do::None => {}
             Do::Keys(k) => {
-                // hand focus back to the app the user was in, then send it the shortcut
+                // hand focus back to the app the user was in, then send it the shortcut.
+                // Activate on the UI thread; the key press itself is instant and does not block.
                 if self.target_ok() {
                     shell::activate(self.target);
-                    std::thread::sleep(Duration::from_millis(90));
                     key(k);
                 }
             }
@@ -848,8 +977,8 @@ impl MenuBar {
             Do::Login => toggle_login(),
             Do::Settings => return Some(BarAct::OpenSettings),
             Do::OpenUpdate => {
-                if let Some((_, url)) = crate::update::available() {
-                    shell::launch(&url);
+                if let Some((v, url)) = crate::update::available() {
+                    return self.offer_update(&v, &url);
                 }
             }
             Do::CheckUpdate => {
@@ -902,6 +1031,14 @@ Open the download page?")) {
             Item::Logo => 13.0,
             Item::App => self.text_w(&self.app_name, self.font(700)),
             Item::Menu(m) => self.text_w(crate::i18n::t(m), self.font(500)),
+            Item::NowPlaying => match crate::nowplaying::current() {
+                Some((t, a, _)) if !t.is_empty() => {
+                    let f = self.font(500);
+                    let w = 74.0 + 20.0 + self.text_w(&t, f) + if a.is_empty() { 0.0 } else { 6.0 + self.text_w(&a, self.font(400)) };
+                    w.min(NP_MAX_W)
+                }
+                _ => 0.0,
+            },
             Item::Chevron => self.text_w("\u{E70E}", self.glyph_font(11.0)),
             Item::Ai => 14.0 + if self.ai_label.is_empty() { 0.0 } else { 5.0 + self.text_w(&self.ai_label, self.font(400)) },
             Item::Battery => {
@@ -912,6 +1049,8 @@ Open the download page?")) {
             Item::Search => self.text_w("\u{E721}", self.glyph_font(GLYPH_PX)),
             Item::Apps => self.text_w("\u{F0E2}", self.glyph_font(GLYPH_PX)),
             Item::Cc => 17.0,
+            Item::Bell => self.text_w("\u{E7F4}", self.glyph_font(GLYPH_PX)),
+            Item::Island => self.text_w("\u{E734}", self.glyph_font(GLYPH_PX)),
             Item::Clock => self.text_w(&self.clock, self.font(400)),
         }
     }
@@ -919,7 +1058,7 @@ Open the download page?")) {
     fn layout(&mut self) {
         let mut slots = Vec::new();
         let mut x = SIDE;
-        for it in [Item::Logo, Item::App, Item::Menu("File"), Item::Menu("Edit"), Item::Menu("View"), Item::Menu("Window"), Item::Menu("Help")] {
+        for it in [Item::Logo, Item::App, Item::Menu("File"), Item::Menu("Edit"), Item::Menu("View"), Item::Menu("Window"), Item::Menu("Help"), Item::NowPlaying] {
             let w = self.content_w(it) + PAD_X * 2.0;
             slots.push(Slot { item: it, x: x + GAP, w });
             x += w + GAP * 2.0;
@@ -934,7 +1073,7 @@ Open the download page?")) {
         if self.battery.is_some() {
             right.push(Item::Battery);
         }
-        right.extend([Item::Net, Item::Apps, Item::Search, Item::Cc, Item::Clock]);
+        right.extend([Item::Net, Item::Apps, Item::Search, Item::Cc, Item::Bell, Item::Island, Item::Clock]);
         let mut x = self.screen_w - SIDE;
         for it in right.into_iter().rev() {
             let w = self.content_w(it) + PAD_X * 2.0;
@@ -956,11 +1095,14 @@ Open the download page?")) {
             self.surface = Surface::new(w, h);
         }
         let dpi = self.dpi as f32;
-        let mut pm = Pixmap::new(w, h).unwrap();
+        // Allocation can fail on a huge or odd screen; skip this frame instead of taking the app down.
+        let (Some(mut pm), Some(mut content)) = (Pixmap::new(w, h), Pixmap::new(w, h)) else {
+            self.dirty = true; // try again next tick
+            return;
+        };
         // macOS 26: no bar at all, the content sits on the wallpaper. The bar's own pixels stay at alpha 1 so
         // the whole strip still takes clicks; hover / open highlights go on that layer, under the content.
         pm.fill(Color::from_rgba8(0, 0, 0, 1));
-        let mut content = Pixmap::new(w, h).unwrap();
         for (i, s) in self.slots.iter().enumerate() {
             let lit = if self.open == Some(i) { 0x40 } else if self.hover == Some(i) { 0x30 } else { 0 };
             if lit > 0 {
@@ -984,7 +1126,7 @@ Open the download page?")) {
                         // update available: a small blue dot on the logo's top-right corner, like a badge
                         if let Some(p) = tiny_skia::PathBuilder::from_circle(cx + 13.0 * dpi, mid - 6.5 * dpi, 3.2 * dpi) {
                             let mut paint = Paint::default();
-                            paint.set_color_rgba8(0xFF, 0x84, 0x0A, 0xFF); // BGRA: #0A84FF
+                            paint.set_color_rgba8(0x0A, 0x84, 0xFF, 0xFF); // accent blue #0A84FF
                             paint.anti_alias = true;
                             content.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
                         }
@@ -1015,6 +1157,55 @@ Open the download page?")) {
                 Item::Search => self.draw_text(&mut content, "\u{E721}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Apps => self.draw_text(&mut content, "\u{F0E2}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Cc => draw_cc(&mut content, cx, mid, dpi),
+                Item::Bell => self.draw_text(&mut content, "\u{E7F4}", self.glyph_font(GLYPH_PX), cx, mid),
+                Item::Island => self.draw_text(&mut content, "\u{E734}", self.glyph_font(GLYPH_PX), cx, mid),
+                Item::NowPlaying => {
+                    if let Some((t, a, playing)) = crate::nowplaying::current() {
+                        if !t.is_empty() {
+                            self.draw_text(&mut content, "\u{E734}", self.glyph_font(11.0), cx, mid);
+                            let tx = cx + 16.0 * dpi;
+                            // leave room for the three transport buttons on the right; truncate to fit
+                            let btn_area = 74.0 * dpi;
+                            let text_avail = ((s.w as f32) * dpi) - 16.0 * dpi - btn_area - 8.0 * dpi;
+                            let f = self.font(500);
+                            let t_txt = trunc_label(&t, text_avail, f);
+                            self.draw_text(&mut content, &t_txt, f, tx, mid);
+                            if !a.is_empty() {
+                                let fa = self.font(400);
+                                let aw = self.text_w(&t_txt, f) as f32 + 6.0;
+                                let aa = text_avail - aw * dpi;
+                                if aa > 10.0 {
+                                    let a_txt = trunc_label(&a, aa, fa);
+                                    self.draw_text(&mut content, &a_txt, fa, tx + aw * dpi, mid);
+                                }
+                            }
+                            // transport buttons at the right of the slot
+                            let gap = 4.0 * dpi;
+                            let bw = 22.0 * dpi;
+                            let mut bx = (s.x + s.w - PAD_X - 74.0) as f32 * dpi;
+                            let by = mid - 9.0 * dpi;
+                            let draw_btn_bg = |content: &mut Pixmap, bx: f32| {
+                                if let Some(p) = gfx::rrect(bx, by, bw, 18.0 * dpi, 9.0 * dpi) {
+                                    let mut paint = Paint::default();
+                                    paint.set_color_rgba8(255, 255, 255, 24);
+                                    paint.anti_alias = true;
+                                    content.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+                                }
+                            };
+                            // prev
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, "\u{E892}", self.glyph_font(13.0), bx + bw / 2.0, mid);
+                            bx += bw + gap;
+                            // play/pause
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, if playing { "\u{E769}" } else { "\u{E768}" }, self.glyph_font(15.0), bx + bw / 2.0, mid);
+                            bx += bw + gap;
+                            // next
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, "\u{E893}", self.glyph_font(13.0), bx + bw / 2.0, mid);
+                        }
+                    }
+                }
                 Item::Clock => self.draw_text(&mut content, &self.clock, self.font(400), cx, mid),
             }
         }

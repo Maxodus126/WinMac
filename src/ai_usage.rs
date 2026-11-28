@@ -151,7 +151,7 @@ pub fn start(claude_limit: Option<u64>, claude_oauth: bool, notify: impl Fn() + 
                 if !PAUSED.load(Ordering::Relaxed) {
                     let s = st.pass();
                     let key = s.key();
-                    *SUMMARY.lock().unwrap() = Some(Arc::new(s));
+                    *SUMMARY.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(s));
                     if Some(key) != last_key {
                         last_key = Some(key);
                         GEN.fetch_add(1, Ordering::Relaxed);

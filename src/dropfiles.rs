@@ -74,6 +74,7 @@ fn files_of(data: &IDataObject) -> Vec<String> {
 
 #[implement(IDropTarget)]
 struct Target {
+    hwnd: HWND,
     has_files: std::cell::Cell<bool>,
 }
 
@@ -81,20 +82,20 @@ impl IDropTarget_Impl for Target_Impl {
     fn DragEnter(&self, data: Option<&IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         let ok = data.is_some_and(|d| unsafe { d.QueryGetData(&hdrop_format()) }.is_ok());
         self.has_files.set(ok);
-        crate::push(crate::Ev::Dock(DockEv::DragFiles(ok)));
+        crate::push(crate::Ev::Dock(self.hwnd, DockEv::DragFiles(ok)));
         unsafe { *effect = if ok { effect_at(pt) } else { DROPEFFECT_NONE } };
         Ok(())
     }
 
     fn DragOver(&self, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
-        crate::push(crate::Ev::Dock(DockEv::Wake));
+        crate::push(crate::Ev::Dock(self.hwnd, DockEv::Wake));
         unsafe { *effect = if self.has_files.get() { effect_at(pt) } else { DROPEFFECT_NONE } };
         Ok(())
     }
 
     fn DragLeave(&self) -> Result<()> {
         self.has_files.set(false);
-        crate::push(crate::Ev::Dock(DockEv::DragFiles(false)));
+        crate::push(crate::Ev::Dock(self.hwnd, DockEv::DragFiles(false)));
         Ok(())
     }
 
@@ -102,12 +103,12 @@ impl IDropTarget_Impl for Target_Impl {
         let e = if self.has_files.get() { effect_at(pt) } else { DROPEFFECT_NONE };
         unsafe { *effect = e };
         self.has_files.set(false);
-        crate::push(crate::Ev::Dock(DockEv::DragFiles(false)));
+        crate::push(crate::Ev::Dock(self.hwnd, DockEv::DragFiles(false)));
         if e != DROPEFFECT_NONE {
             if let Some(d) = data {
                 let files = files_of(d);
                 if !files.is_empty() {
-                    crate::push(crate::Ev::Dock(DockEv::DropFiles(files, pt.x, pt.y)));
+                    crate::push(crate::Ev::Dock(self.hwnd, DockEv::DropFiles(files, pt.x, pt.y)));
                 }
             }
         }
@@ -117,10 +118,16 @@ impl IDropTarget_Impl for Target_Impl {
 
 /// Make the dock window a drop target (OleInitialize must have run on this thread).
 pub fn register(hwnd: HWND) {
-    let t: IDropTarget = Target { has_files: std::cell::Cell::new(false) }.into();
+    let t: IDropTarget = Target { hwnd, has_files: std::cell::Cell::new(false) }.into();
     unsafe {
         let _ = RegisterDragDrop(hwnd, &t);
     }
+}
+
+/// Remove the dock window as a drop target (the window is being destroyed).
+pub fn unregister(hwnd: HWND) {
+    unsafe { let _ = windows::Win32::System::Ole::RevokeDragDrop(hwnd); }
+    set_zones(Vec::new());
 }
 
 fn quote(f: &str) -> String {
