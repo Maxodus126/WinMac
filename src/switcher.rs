@@ -90,17 +90,14 @@ impl Switcher {
         HWND(HWND_SW.load(Ordering::Relaxed) as *mut _)
     }
 
-    /// Running apps, most recently used first (the z-order), one entry per app.
+    /// Every open window, most recently used first (the z-order), one entry per window. Each cell shows the
+    /// window's own title over the app icon — DockDoor's window switcher, not the app-level one.
     fn collect(&mut self) {
         let wins = self.shell.app_windows();
-        let mut apps: Vec<App> = Vec::new();
+        let mut apps: Vec<App> = Vec::with_capacity(wins.len());
         let px = self.icon_px;
         for w in &wins {
             let key = app_key(w);
-            if let Some(a) = apps.iter_mut().find(|a| a.key == key) {
-                a.wins.push(w.hwnd);
-                continue;
-            }
             let (name, icon) = self.icons.entry(key.clone()).or_insert_with(|| {
                 let mut name = shell::friendly_name(w.exe.as_deref(), w.aumid.as_deref(), &w.title);
                 if name.eq_ignore_ascii_case("explorer") {
@@ -118,6 +115,9 @@ impl Switcher {
                 let icon = raw.and_then(|r| crate::tile::make(&r, px).or_else(|| crate::tile::fit(&r, px)));
                 (name, icon)
             }).clone();
+            // label each cell by its window title (fall back to the app name)
+            let title = w.title.trim();
+            let name = if title.is_empty() { name } else { title.to_string() };
             apps.push(App { key, name, wins: vec![w.hwnd], icon });
         }
         self.apps = apps;
@@ -392,6 +392,11 @@ fn post(msg: u32, wp: usize) {
     }
 }
 
+/// Wake or step from an external trigger (the Win+Tab hotkey).
+pub fn tab(back: bool) {
+    post(WM_SW_TAB, back as usize);
+}
+
 unsafe extern "system" fn kb_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code < 0 {
         return CallNextHookEx(HHOOK::default(), code, wp, lp);
@@ -403,9 +408,12 @@ unsafe extern "system" fn kb_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT 
     }
     let is_down = matches!(wp.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
     let alt = k.flags.0 & LLKHF_ALTDOWN.0 != 0 || down(VK_MENU.0 as i32);
+    let win = down(VK_LWIN.0 as i32) || down(VK_RWIN.0 as i32);
     let active = ACTIVE.load(Ordering::Relaxed);
 
-    if vk == VK_TAB.0 && alt && !down(VK_LWIN.0 as i32) && !down(VK_RWIN.0 as i32) {
+    // Alt+Tab opens our switcher (Win+Tab is taken over via RegisterHotKey instead, since Task View is
+    // handled below the hook level).
+    if vk == VK_TAB.0 && alt && !win {
         if is_down {
             if !active {
                 ACTIVE.store(true, Ordering::Relaxed);
@@ -417,7 +425,7 @@ unsafe extern "system" fn kb_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT 
     if !active {
         return CallNextHookEx(HHOOK::default(), code, wp, lp);
     }
-    if !is_down && (vk == VK_LMENU.0 || vk == VK_RMENU.0 || vk == VK_MENU.0) {
+    if !is_down && (vk == VK_LMENU.0 || vk == VK_RMENU.0 || vk == VK_MENU.0 || vk == VK_LWIN.0 || vk == VK_RWIN.0) {
         ACTIVE.store(false, Ordering::Relaxed);
         post(WM_SW_COMMIT, 0);
         return CallNextHookEx(HHOOK::default(), code, wp, lp);

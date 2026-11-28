@@ -114,6 +114,7 @@ enum Item {
     Cc,
     Bell,
     Island,
+    NowPlaying,
     Clock,
 }
 
@@ -291,6 +292,44 @@ pub fn create_window() -> HWND {
 }
 
 // ------------------------------------------------------------------ the bar
+
+/// Widest the now-playing slot may be (DIPs), so a long title never covers the other bar items.
+const NP_MAX_W: f64 = 300.0;
+
+/// A label that fits `max_w` px (stops appending once it would overflow).
+fn trunc_label(s: &str, max_w: f32, f: Font) -> String {
+    if gfx::measure(s, f).0 as f32 <= max_w {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for ch in s.chars() {
+        let mut cand = out.clone();
+        cand.push(ch);
+        if gfx::measure(&cand, f).0 as f32 > max_w {
+            break;
+        }
+        out = cand;
+    }
+    if out.is_empty() { s.chars().next().map(|c| c.to_string()).unwrap_or_default() } else { out }
+}
+
+/// Signature of the current media session, to know when the now-playing label changed.
+static NP_SIG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn np_sig() -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    if let Some((t, a, p)) = crate::nowplaying::current() {
+        for b in t.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        for b in a.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h ^= p as u64;
+    }
+    h
+}
 
 pub struct MenuBar {
     pub hwnd: HWND,
@@ -517,6 +556,11 @@ impl MenuBar {
                 self.dirty = true;
             }
         }
+        let sig = np_sig();
+        if sig != NP_SIG.load(std::sync::atomic::Ordering::Relaxed) {
+            NP_SIG.store(sig, std::sync::atomic::Ordering::Relaxed);
+            self.dirty = true;
+        }
     }
 
     /// Pick up a new AI usage summary: ring = the limit closest to running out, text = burn rate while busy.
@@ -568,7 +612,7 @@ impl MenuBar {
             }
             BarEv::Up(x) => {
                 let i = self.slot_at(x)?;
-                return self.click(i);
+                return self.click(i, x as f64);
             }
             BarEv::RightUp(x) => {
                 let i = self.slot_at(x)?;
@@ -712,11 +756,29 @@ impl MenuBar {
         self.slots.iter().position(|s| x >= s.x - GAP && x < s.x + s.w + GAP)
     }
 
-    fn click(&mut self, i: usize) -> Option<BarAct> {
+    fn click(&mut self, i: usize, x: f64) -> Option<BarAct> {
         let s = &self.slots[i];
         let (l, r) = (self.px(s.x), self.px(s.x + s.w));
         match s.item {
             Item::Logo | Item::App | Item::Menu(_) => return self.show_menu(i),
+            Item::NowPlaying => {
+                let s = &self.slots[i];
+                let rel = x - s.x;
+                let btn_left = s.w - PAD_X - 74.0;
+                if rel < btn_left {
+                    crate::nowplaying::focus();
+                } else {
+                    let off = rel - btn_left;
+                    if off < 22.0 {
+                        crate::nowplaying::prev();
+                    } else if off < 26.0 + 22.0 {
+                        crate::nowplaying::toggle();
+                    } else {
+                        crate::nowplaying::next();
+                    }
+                }
+                return None;
+            }
             Item::Chevron => return Some(BarAct::Flyout(Extra::Tray, l, r)),
             Item::Ai => return Some(BarAct::Flyout(Extra::Ai, l, r)),
             Item::Battery => return Some(BarAct::Flyout(Extra::Battery, l, r)),
@@ -969,6 +1031,14 @@ Open the download page?")) {
             Item::Logo => 13.0,
             Item::App => self.text_w(&self.app_name, self.font(700)),
             Item::Menu(m) => self.text_w(crate::i18n::t(m), self.font(500)),
+            Item::NowPlaying => match crate::nowplaying::current() {
+                Some((t, a, _)) if !t.is_empty() => {
+                    let f = self.font(500);
+                    let w = 74.0 + 20.0 + self.text_w(&t, f) + if a.is_empty() { 0.0 } else { 6.0 + self.text_w(&a, self.font(400)) };
+                    w.min(NP_MAX_W)
+                }
+                _ => 0.0,
+            },
             Item::Chevron => self.text_w("\u{E70E}", self.glyph_font(11.0)),
             Item::Ai => 14.0 + if self.ai_label.is_empty() { 0.0 } else { 5.0 + self.text_w(&self.ai_label, self.font(400)) },
             Item::Battery => {
@@ -988,7 +1058,7 @@ Open the download page?")) {
     fn layout(&mut self) {
         let mut slots = Vec::new();
         let mut x = SIDE;
-        for it in [Item::Logo, Item::App, Item::Menu("File"), Item::Menu("Edit"), Item::Menu("View"), Item::Menu("Window"), Item::Menu("Help")] {
+        for it in [Item::Logo, Item::App, Item::Menu("File"), Item::Menu("Edit"), Item::Menu("View"), Item::Menu("Window"), Item::Menu("Help"), Item::NowPlaying] {
             let w = self.content_w(it) + PAD_X * 2.0;
             slots.push(Slot { item: it, x: x + GAP, w });
             x += w + GAP * 2.0;
@@ -1089,6 +1159,53 @@ Open the download page?")) {
                 Item::Cc => draw_cc(&mut content, cx, mid, dpi),
                 Item::Bell => self.draw_text(&mut content, "\u{E7F4}", self.glyph_font(GLYPH_PX), cx, mid),
                 Item::Island => self.draw_text(&mut content, "\u{E734}", self.glyph_font(GLYPH_PX), cx, mid),
+                Item::NowPlaying => {
+                    if let Some((t, a, playing)) = crate::nowplaying::current() {
+                        if !t.is_empty() {
+                            self.draw_text(&mut content, "\u{E734}", self.glyph_font(11.0), cx, mid);
+                            let tx = cx + 16.0 * dpi;
+                            // leave room for the three transport buttons on the right; truncate to fit
+                            let btn_area = 74.0 * dpi;
+                            let text_avail = ((s.w as f32) * dpi) - 16.0 * dpi - btn_area - 8.0 * dpi;
+                            let f = self.font(500);
+                            let t_txt = trunc_label(&t, text_avail, f);
+                            self.draw_text(&mut content, &t_txt, f, tx, mid);
+                            if !a.is_empty() {
+                                let fa = self.font(400);
+                                let aw = self.text_w(&t_txt, f) as f32 + 6.0;
+                                let aa = text_avail - aw * dpi;
+                                if aa > 10.0 {
+                                    let a_txt = trunc_label(&a, aa, fa);
+                                    self.draw_text(&mut content, &a_txt, fa, tx + aw * dpi, mid);
+                                }
+                            }
+                            // transport buttons at the right of the slot
+                            let gap = 4.0 * dpi;
+                            let bw = 22.0 * dpi;
+                            let mut bx = (s.x + s.w - PAD_X - 74.0) as f32 * dpi;
+                            let by = mid - 9.0 * dpi;
+                            let draw_btn_bg = |content: &mut Pixmap, bx: f32| {
+                                if let Some(p) = gfx::rrect(bx, by, bw, 18.0 * dpi, 9.0 * dpi) {
+                                    let mut paint = Paint::default();
+                                    paint.set_color_rgba8(255, 255, 255, 24);
+                                    paint.anti_alias = true;
+                                    content.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+                                }
+                            };
+                            // prev
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, "\u{E892}", self.glyph_font(13.0), bx + bw / 2.0, mid);
+                            bx += bw + gap;
+                            // play/pause
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, if playing { "\u{E769}" } else { "\u{E768}" }, self.glyph_font(15.0), bx + bw / 2.0, mid);
+                            bx += bw + gap;
+                            // next
+                            draw_btn_bg(&mut content, bx);
+                            self.draw_text(&mut content, "\u{E893}", self.glyph_font(13.0), bx + bw / 2.0, mid);
+                        }
+                    }
+                }
                 Item::Clock => self.draw_text(&mut content, &self.clock, self.font(400), cx, mid),
             }
         }

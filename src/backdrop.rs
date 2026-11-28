@@ -332,6 +332,28 @@ impl Backdrop {
                 let pm = self.read(&tex, t)?;
                 Some((RECT { left: cr.left + t.left, top: cr.top + t.top, right: cr.left + t.right, bottom: cr.top + t.bottom }, pm))
             });
+            // A freshly opening window paints its first frame black; ignore such near-black captures so the
+            // dock never shows a black block at the window's edge while it animates in (keep the previous
+            // crop, or wallpaper underneath if there is none).
+            let crop = match crop {
+                Some((r, pm)) => {
+                    let dark = {
+                        let d = pm.data();
+                        let n = d.len() / 4;
+                        if n == 0 {
+                            true
+                        } else {
+                            let mut sum: u64 = 0;
+                            for px in d.chunks_exact(4) {
+                                sum += (px[0] as u64 + px[1] as u64 + px[2] as u64) / 3;
+                            }
+                            (sum / n as u64) < 3
+                        }
+                    };
+                    if dark { self.caps.get(h).and_then(|c| c.crop.clone()) } else { Some((r, pm)) }
+                }
+                None => None,
+            };
             let cap = self.caps.get_mut(h).unwrap();
             let same = match (&cap.crop, &crop) {
                 (Some((ra, a)), Some((rb, b))) => ra == rb && a.data() == b.data(),

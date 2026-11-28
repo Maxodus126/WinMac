@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tiny_skia::{IntSize, Pixmap};
+use tiny_skia::{FilterQuality, IntSize, Pixmap, PixmapPaint, Transform};
 use windows::core::w;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS, DWM_TIMING_INFO};
@@ -510,6 +510,46 @@ fn grab_windows(hs: &[isize]) -> Vec<(isize, Pixmap, R)> {
             .collect();
         jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
     })
+}
+
+/// Thumbnails for a hover preview: each window grabbed the same way as the genie (PrintWindow, so covered and
+/// minimized windows come back too); when PrintWindow fails (some GPU-drawn or elevated windows come back
+/// black) it falls back to a plain screen grab. Scaled so the widest is at most `max_w` px, one thread per
+/// window, in the input order. Windows that fail both ways are left out.
+pub(crate) fn preview_thumbs(hwnds: &[isize], max_w: i32) -> Vec<(isize, Pixmap)> {
+    let mut out = Vec::new();
+    // grab at most two windows at a time; grabbing many windows in parallel forces them all to render at
+    // once and visibly stutters the whole desktop
+    for chunk in hwnds.chunks(2) {
+        let got: Vec<(isize, Pixmap)> = std::thread::scope(|s| {
+            let jobs: Vec<_> = chunk
+                .iter()
+                .map(|&k| {
+                    s.spawn(move || {
+                        let h = hwnd_of(k);
+                        let r = window_rect(h)?;
+                        let img = grab_window(h, r).or_else(|| grab(r, max_w))?;
+                        let w = img.width().max(1) as i32;
+                        let scale = max_w.min(w) as f32 / w as f32;
+                        let (dw, dh) = ((img.width() as f32 * scale).round().max(1.0) as u32, (img.height() as f32 * scale).round().max(1.0) as u32);
+                        let mut small = Pixmap::new(dw, dh)?;
+                        small.draw_pixmap(
+                            0,
+                            0,
+                            img.as_ref(),
+                            &PixmapPaint { quality: FilterQuality::Bicubic, ..Default::default() },
+                            Transform::from_scale(scale, scale),
+                            None,
+                        );
+                        Some((k, small))
+                    })
+                })
+                .collect();
+            jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
+        });
+        out.extend(got);
+    }
+    out
 }
 
 /// `wins` sorted by z-order, front first; any not found among the top-level windows go last.

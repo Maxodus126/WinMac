@@ -18,10 +18,11 @@ const BAR: f32 = 52.0;
 const ROW: f32 = 40.0;
 const MAX_APPS: usize = 7;
 const MAX_FILES: usize = 5;
+const MAX_SETTINGS: usize = 6;
 const LIST_TOP: f32 = BAR + 7.0;
 const LIST_PAD: f32 = 9.0;
 /// the tallest it gets: every app row, file rows, the calculator row and the web row
-const MAX_H: f32 = LIST_TOP + (MAX_APPS + MAX_FILES + 2) as f32 * ROW + LIST_PAD;
+const MAX_H: f32 = LIST_TOP + (MAX_APPS + MAX_FILES + MAX_SETTINGS + 2) as f32 * ROW + LIST_PAD;
 /// where the capsule's top sits, as a fraction of the screen height (macOS keeps it above the middle)
 const TOP: f32 = 0.22;
 
@@ -39,6 +40,42 @@ struct FileHit {
     is_dir: bool,
 }
 
+/// A Windows settings/tool search hit: display name + what to launch (`ms-settings:…` URI, `.msc`,
+/// `.exe`, or a Control Panel applet).
+#[derive(Clone)]
+struct SettingsHit {
+    name: String,
+    launch: String,
+}
+
+/// A curated subset of Windows settings and tools, each with its launcher.
+const SETTINGS: &[(&str, &str)] = &[
+    ("Display", "ms-settings:display"),
+    ("Wi-Fi", "ms-settings:network-wifi"),
+    ("Network", "ms-settings:network"),
+    ("Bluetooth", "ms-settings:bluetooth"),
+    ("Sound", "ms-settings:sound"),
+    ("Add or remove programs", "ms-settings:appsfeatures"),
+    ("Default apps", "ms-settings:defaultapps"),
+    ("Personalization", "ms-settings:personalization"),
+    ("Taskbar", "ms-settings:taskbar"),
+    ("Notifications", "ms-settings:notifications"),
+    ("Power & battery", "ms-settings:power"),
+    ("Mouse", "ms-settings:mousetouchpad"),
+    ("Keyboard", "ms-settings:keyboard"),
+    ("Accounts", "ms-settings:accounts"),
+    ("Privacy", "ms-settings:privacy"),
+    ("Windows Update", "ms-settings:windowsupdate"),
+    ("Device Manager", "devmgmt.msc"),
+    ("Services", "services.msc"),
+    ("Computer Management", "compmgmt.msc"),
+    ("Disk Management", "diskmgmt.msc"),
+    ("Task Manager", "taskmgr.exe"),
+    ("Control Panel", "control.exe"),
+    ("Command Prompt", "cmd.exe"),
+    ("PowerShell", "powershell.exe"),
+];
+
 pub struct Spotlight {
     apps: Vec<App>,
     query: String,
@@ -46,6 +83,8 @@ pub struct Spotlight {
     hits: Vec<usize>,
     /// file/folder matches for the current query
     files: Vec<FileHit>,
+    /// Windows settings/tool matches for the current query
+    settings: Vec<SettingsHit>,
     /// a calculator result for the current query (pure arithmetic expressions)
     calc: Option<String>,
     sel: usize,
@@ -287,7 +326,7 @@ impl Spotlight {
     }
 
     fn empty(apps: Vec<App>, motion: bool) -> Spotlight {
-        Spotlight { apps, query: String::new(), hits: Vec::new(), files: Vec::new(), calc: None, sel: 0, h: BAR, blink: Instant::now(), changed: None, last_tick: None, motion, files_job: Arc::new(Mutex::new(None)), files_pending: None, hwnd: 0 }
+        Spotlight { apps, query: String::new(), hits: Vec::new(), files: Vec::new(), settings: Vec::new(), calc: None, sel: 0, h: BAR, blink: Instant::now(), changed: None, last_tick: None, motion, files_job: Arc::new(Mutex::new(None)), files_pending: None, hwnd: 0 }
     }
 
     fn pick_up(&mut self) {
@@ -299,12 +338,18 @@ impl Spotlight {
         let q = self.query.trim().to_lowercase();
         self.hits.clear();
         self.calc = None;
+        self.settings.clear();
         if !q.is_empty() {
             let mut hits: Vec<(u8, usize, usize)> =
                 self.apps.iter().enumerate().filter_map(|(i, a)| rank(&a.name.to_lowercase(), &q).map(|r| (r, a.name.len(), i))).collect();
             hits.sort();
             self.hits = hits.into_iter().map(|h| h.2).take(MAX_APPS).collect();
             self.calc = eval_calc(&q);
+            for &(name, launch) in SETTINGS {
+                if name.to_lowercase().contains(&q) && self.settings.len() < MAX_SETTINGS {
+                    self.settings.push(SettingsHit { name: name.to_string(), launch: launch.to_string() });
+                }
+            }
             // kick off an off-thread filesystem search; results land via data()
             if !NO_FS.load(Ordering::Relaxed) {
                 if self.files_pending.as_deref() != Some(&q) {
@@ -348,19 +393,24 @@ impl Spotlight {
         }
     }
 
-    /// Rows under the field: the apps, files/folders, a calculator result, then the web search
+    /// Rows under the field: apps | files/folders | Windows settings/tools | calculator | web search
     /// (none while the field is empty).
+    /// First row after apps+files (the settings band begins here).
+    fn a_settings(&self) -> usize {
+        self.hits.len() + self.files.len() + self.settings.len()
+    }
+
     fn rows(&self) -> usize {
         if self.query.trim().is_empty() {
             0
         } else {
-            self.hits.len() + self.files.len() + if self.calc.is_some() { 1 } else { 0 } + 1
+            self.a_settings() + if self.calc.is_some() { 1 } else { 0 } + 1
         }
     }
 
     /// Is `r` the web-search row (the last one)?
     fn is_web_row(&self, r: usize) -> bool {
-        r == self.hits.len() + self.files.len() + if self.calc.is_some() { 1 } else { 0 }
+        r == self.a_settings() + if self.calc.is_some() { 1 } else { 0 }
     }
 
     fn want_h(&self) -> f32 {
@@ -384,13 +434,16 @@ impl Spotlight {
 
     fn open(&self, row: usize) -> Cmd {
         let a = self.hits.len();
+        let af = a + self.files.len();
         if let Some(&ai) = self.hits.get(row) {
             let spec = self.apps[ai].spec.clone();
             crate::apps::remember(&spec);
             Cmd::Launch(spec)
-        } else if row < a + self.files.len() {
+        } else if row < af {
             Cmd::Launch(self.files[row - a].path.clone())
-        } else if self.calc.is_some() && row == a + self.files.len() {
+        } else if row < self.a_settings() {
+            Cmd::Launch(self.settings[row - af].launch.clone())
+        } else if self.calc.is_some() && row == self.a_settings() {
             Cmd::None // a calculator result: nothing to launch
         } else if self.is_web_row(row) && !self.query.trim().is_empty() {
             Cmd::Launch(format!("https://www.google.com/search?q={}", encode(self.query.trim())))
@@ -439,6 +492,7 @@ impl Spotlight {
         let hits = &self.hits;
         let apps = &self.apps;
         let files = &self.files;
+        let settings = &self.settings;
         let calc = &self.calc;
         ui.layer(-PAD.0, BAR, cw + 2.0 * PAD.0, view, 1.0, 1.0, [0.0, 0.0, 0.0, 0.0], |ui| {
             ui.line(0.0, BAR + 0.5, cw, BAR + 0.5, 1.0, white(0x1F));
@@ -456,7 +510,8 @@ impl Spotlight {
                 let ty = y + ROW / 2.0;
                 let fade = |c: u8| (c as f32 * a) as u8;
                 let a_hits = hits.len();
-                let a_files = hits.len() + files.len();
+                let a_files = a_hits + files.len();
+                let a_settings = a_files + settings.len();
                 let (name, kind) = if r < a_hits {
                     let app = &apps[hits[r]];
                     match &app.icon {
@@ -472,7 +527,10 @@ impl Spotlight {
                         ui.glyph(14.0, ty, '\u{E73E}', 16.0, white(fade(0xE0)));
                     }
                     (Cow::Owned(f.name.clone()), t(if f.is_dir { "Folder" } else { "Document" }))
-                } else if calc.is_some() && r == a_files {
+                } else if r < a_settings {
+                    ui.glyph(14.0, ty, '\u{E8B7}', 17.0, white(fade(0xE0)));
+                    (Cow::Owned(settings[r - a_files].name.clone()), t("Settings"))
+                } else if calc.is_some() && r == a_settings {
                     ui.glyph(14.0, ty, '\u{E8EF}', 17.0, white(fade(0xE0)));
                     (Cow::Owned(format!("= {}", calc.as_ref().unwrap())), t("Calculator"))
                 } else {

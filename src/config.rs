@@ -69,6 +69,11 @@ pub struct Config {
     pub icon_style: String,
     /// Dock screen edge: "bottom", "left" or "right".
     pub dock_position: String,
+    /// Extra frosted-glass tint over the dock plate ("#RRGGBB", "" = none) and its opacity in 0..1.
+    pub glass_tint: String,
+    pub glass_opacity: f64,
+    /// Draw the dock plate's drop shadow (off removes any shadow band bleeding over app windows).
+    pub dock_shadow: bool,
     /// Keys we don't know (written by a newer build) survive a save.
     extra: Map<String, Value>,
 }
@@ -146,7 +151,7 @@ impl Default for Config {
             widget_items: vec!["clock".into(), "date".into(), "battery".into(), "system".into()],
             widget_position: "top-right".into(),
             widget_offset: None,
-            app_switcher: false,
+            app_switcher: true,
             check_updates: true,
             battery_percent: false,
             genie_ms: 560.0,
@@ -158,6 +163,9 @@ impl Default for Config {
             launchpad_style: "apps".into(),
             icon_style: "default".into(),
             dock_position: "bottom".into(),
+            glass_tint: String::new(),
+            glass_opacity: 0.0,
+            dock_shadow: true,
             extra: Map::new(),
         }
     }
@@ -204,6 +212,7 @@ impl Config {
         b("AppSwitcher", &mut c.app_switcher);
         b("CheckUpdates", &mut c.check_updates);
         b("ReduceMotion", &mut c.reduce_motion);
+        b("DockShadow", &mut c.dock_shadow);
         let mut f = |k: &str, d: &mut f64, lo: f64, hi: f64| {
             if let Some(x) = v.remove(k).and_then(|x| x.as_f64()) {
                 *d = x.clamp(lo, hi);
@@ -213,6 +222,10 @@ impl Config {
         f("MagnifySpeed", &mut c.magnify_speed, SPEED.0, SPEED.1);
         f("AutoHideDelay", &mut c.hide_delay_ms, HIDE_DELAY_MS.0, HIDE_DELAY_MS.1);
         f("AutoHideSpeed", &mut c.hide_speed, SPEED.0, SPEED.1);
+        f("GlassOpacity", &mut c.glass_opacity, 0.0, 1.0);
+        if let Some(s) = v.remove("GlassTint").and_then(|x| x.as_str().map(String::from)) {
+            c.glass_tint = s;
+        }
         if let Some(l) = v.remove("Language").and_then(|x| x.as_str().map(String::from)) {
             if ["auto", "en", "id"].contains(&l.as_str()) {
                 c.language = l;
@@ -326,6 +339,9 @@ impl Config {
             "LaunchpadStyle": self.launchpad_style,
             "IconStyle": self.icon_style,
             "DockPosition": self.dock_position,
+            "GlassTint": self.glass_tint,
+            "GlassOpacity": self.glass_opacity,
+            "DockShadow": self.dock_shadow,
         });
         if let Value::Object(f) = fields {
             m.extend(f);
@@ -420,6 +436,9 @@ impl Config {
             "LaunchpadStyle": self.launchpad_style,
             "IconStyle": self.icon_style,
             "DockPosition": self.dock_position,
+            "GlassTint": self.glass_tint,
+            "GlassOpacity": self.glass_opacity,
+            "DockShadow": self.dock_shadow,
         });
         if let Value::Object(f) = fields {
             m.extend(f);

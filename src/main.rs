@@ -25,13 +25,17 @@ mod launchpad;
 mod fly_wifi;
 mod flyout;
 mod genie;
+mod forcequit;
 mod i18n;
 mod genie_gpu;
 mod gfx;
+mod hotcorners;
 mod menu;
 mod menubar;
 mod notification_center;
+mod nowplaying;
 mod power;
+mod preview;
 mod shell;
 mod switcher;
 mod sysctl;
@@ -67,6 +71,12 @@ pub enum Ev {
     Settings(fly_settings::Change),
     /// Alt+Space
     Spotlight,
+    /// Hot Corners: corner index (0 TL, 1 TR, 2 BL, 3 BR)
+    HotCorner(u8),
+    /// Ctrl+Alt+Q: force-quit panel
+    ForceQuit,
+    /// Win+Tab (taken over from Windows Task View)
+    WinTab,
 }
 
 thread_local! {
@@ -553,6 +563,14 @@ impl App {
             }
             Ev::Settings(ch) => return self.on_settings(ch),
             Ev::Spotlight => self.open_spotlight(),
+            Ev::HotCorner(c) => match c {
+                0 => self.open_spotlight(),
+                1 => self.open_launchpad(),
+                3 => crate::hotcorners::show_desktop(),
+                _ => {}
+            },
+            Ev::ForceQuit => crate::forcequit::show(),
+            Ev::WinTab => crate::switcher::tab(false),
             Ev::Genie(ge) => {
                 if let Some(g) = self.genie.as_mut() {
                     g.handle(ge);
@@ -784,6 +802,10 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
     if want_switcher {
         switcher::start();
     }
+    preview::start(); // dock hover window previews, independent of the switcher setting
+    hotcorners::start(); // trigger Spotlight/Launchpad/show-desktop from the screen corners
+    nowplaying::start(); // auto now-playing pill at the top centre
+    forcequit::start(); // Ctrl+Alt+Q force-quit panel
     if check_updates {
         update::cleanup(); // remove a winmac.exe.update-old left by a previous auto-update
         update::start();
@@ -801,8 +823,10 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
 
     unsafe {
         // Spotlight on Alt+Space (macOS has Cmd+Space; Win+Space is taken by the keyboard layouts)
-        use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_ALT, MOD_NOREPEAT, VK_SPACE};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_WIN, VK_Q, VK_SPACE, VK_TAB};
         let _ = RegisterHotKey(HWND::default(), 1, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
+        let _ = RegisterHotKey(HWND::default(), 2, MOD_CONTROL | MOD_ALT, VK_Q.0 as u32);
+        let _ = RegisterHotKey(HWND::default(), 4, MOD_WIN, VK_TAB.0 as u32);
         let mut msg = MSG::default();
         'run: loop {
             if !app.awake() {
@@ -811,7 +835,12 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
                     break;
                 }
                 if msg.message == WM_HOTKEY {
-                    push(Ev::Spotlight);
+                    match msg.wParam.0 {
+                        1 => push(Ev::Spotlight),
+                        2 => push(Ev::ForceQuit),
+                        4 => push(Ev::WinTab),
+                        _ => {}
+                    }
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -821,7 +850,12 @@ Copy winmac.exe to a normal folder (for example %LOCALAPPDATA%\\Programs\\WIN MA
                     break 'run;
                 }
                 if msg.message == WM_HOTKEY {
-                    push(Ev::Spotlight);
+                    match msg.wParam.0 {
+                        1 => push(Ev::Spotlight),
+                        2 => push(Ev::ForceQuit),
+                        4 => push(Ev::WinTab),
+                        _ => {}
+                    }
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);

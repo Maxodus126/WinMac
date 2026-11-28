@@ -322,6 +322,18 @@ fn now_secs(t: Instant, base: Instant) -> f64 {
     t.saturating_duration_since(base).as_secs_f64()
 }
 
+/// Parse "#RRGGBB" → (r, g, b); None for anything else.
+fn tint_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let h = hex.trim_start_matches('#');
+    if h.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
 // ------------------------------------------------------------------ the dock
 
 pub struct Dock {
@@ -396,6 +408,11 @@ pub struct Dock {
     look_pending: bool,
     toasts: Vec<(String, i64)>,
     toast_job: Option<Arc<Mutex<Option<Vec<(String, i64)>>>>>,
+    // profiling (only active when WINMAC_PROFILE is set)
+    pf_last: Instant,
+    pf_n: u32,
+    pf_max: f64,
+    pf_sum: f64,
 }
 
 impl Dock {
@@ -443,6 +460,7 @@ impl Dock {
             last_app: unsafe { GetForegroundWindow() },
             seen: None, toasts: Vec::new(), toast_job: None, look_pending: false,
             dock_shadow: None, shadow_plate_h: 0,
+            pf_last: now, pf_n: 0, pf_max: 0.0, pf_sum: 0.0,
         }
     }
 
@@ -477,6 +495,7 @@ impl Dock {
     }
 
     pub fn shutdown(&mut self) {
+        crate::preview::hide();
         self.unreserve();
         // persist any badge "seen" marks that were deferred during the session
         if let Some(seen) = self.seen.as_mut() {
@@ -1283,6 +1302,7 @@ impl Dock {
     }
 
     fn on_down(&mut self) {
+        crate::preview::hide();
         let p = self.cursor();
         self.press_pt = p;
         self.pressed = self.item_at(p.0).map(|i| self.items[i].key.clone());
@@ -1736,11 +1756,87 @@ impl Dock {
 
     // -------------------------------------------------------------- frame
 
+    /// Drive the hover window preview: offer it every frame for the hovered running item (the preview skips
+    /// identical repeats and re-shows after it auto-hides itself). Hide it when the hovered item stops
+    /// running. When nothing is hovered the preview manages its own life via its cursor poll, so moving the
+    /// mouse up onto the preview does not close it.
+    fn update_preview(&mut self) {
+        match self.hovered.and_then(|i| self.items.get(i)) {
+            Some(it) if it.running() && !self.menu_up && self.pressed.is_none() && !self.dragging => {
+                let dpi = self.dpi;
+                let (wx, wy) = (self.win_x(), self.win_y() + self.slide());
+                let plate_top = self.win_h - BOTTOM_GAP - self.plate_h();
+                // keep-alive zone for the preview: the plate plus the icon row above it (in the window frame),
+                // NOT the whole window rect — the window can span the screen in Hide-Taskbar mode, which
+                // would otherwise pin the preview open forever.
+                let plate_bottom = self.win_h - BOTTOM_GAP;
+                let icon_top = plate_bottom - self.plate_h() - self.items.iter().map(|i| i.size).fold(self.b(), f64::max) - PAD;
+                let icon_spec = match (&it.aumid, &it.exe) {
+                    (Some(a), _) => Some(format!("shell:AppsFolder\\{a}")),
+                    (None, Some(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let req = crate::preview::ShowReq {
+                    wins: it.wins.iter().map(|w| w.hwnd.0 as isize).collect(),
+                    name: it.name.clone(),
+                    icon_spec,
+                    cx: ((wx + it.x + it.size / 2.0) * dpi).round() as i32,
+                    bottom: ((wy + plate_top) * dpi).round() as i32,
+                    dock: (
+                        ((wx + self.plate_left) * dpi).round() as i32,
+                        ((wy + icon_top) * dpi).round() as i32,
+                        ((wx + self.plate_left + self.plate_w) * dpi).round() as i32,
+                        ((wy + plate_bottom) * dpi).round() as i32,
+                    ),
+                };
+                crate::preview::show(req);
+            }
+            Some(_) => {
+                // hovered a non-running item: close any preview
+                crate::preview::hide();
+            }
+            None => {}
+            // not over the dock: leave it to the preview's own cursor poll
+        }
+    }
+
+    /// When WINMAC_PROFILE is set, append a frame-time line every 120 frames so a slow dock loop is visible
+    /// in %APPDATA%\WinMac\perf.log (avg/max ms per frame).
+    fn profile_frame(&mut self) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var_os("WINMAC_PROFILE").is_some()) {
+            return;
+        }
+        let dt = self.pf_last.elapsed().as_secs_f64();
+        self.pf_sum += dt;
+        self.pf_n += 1;
+        if dt > self.pf_max {
+            self.pf_max = dt;
+        }
+        if self.pf_n % 120 == 0 {
+            let line = format!(
+                "dock n={} avg={:.3}ms max={:.3}ms\n",
+                self.pf_n,
+                self.pf_sum / self.pf_n as f64 * 1000.0,
+                self.pf_max * 1000.0
+            );
+            if let Ok(dir) = std::fs::create_dir_all(crate::config::dir()) {
+                let _ = dir;
+                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(format!("{}\\perf.log", crate::config::dir())) {
+                    use std::io::Write;
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+        }
+    }
+
     pub fn frame(&mut self) {
         if self.hidden {
             self.awake = false;
+            crate::preview::hide();
             return;
         }
+        self.pf_last = Instant::now();
         if self.pressed.is_some() {
             self.track_drag();
         }
@@ -1856,6 +1952,8 @@ impl Dock {
             x += (b * it.scale + gap) * it.presence;
         }
 
+        self.update_preview();
+
         if self.drag_files {
             // where dropped files can go, in screen px (magnified icons rise above the plate)
             use crate::dropfiles::Zone;
@@ -1883,6 +1981,7 @@ impl Dock {
         }
 
         self.render(plate_top, plate_bottom);
+        self.profile_frame();
 
         // nothing moving and the pointer is away: stop ticking until something wakes us
         let hide_target = if self.cfg.auto_hide && now >= self.peek_until && now_secs(now, self.last_near) >= 0.35 { 1.0 } else { 0.0 };
@@ -1995,10 +2094,13 @@ impl Dock {
 
         // Drop shadow under the dock plate: a real blurred shadow so the dock reads as floating
         // above the wallpaper instead of pasted flat on top of it. Drawn once per plate resize.
-        if let Some((shadow_px, shadow_ox, shadow_oy)) = &self.dock_shadow {
-            let ox = ((pl - 12.0) * dpi as f32).round() as i32 + shadow_ox;
-            let oy = ((pt + slide as f32 - 12.0) * dpi as f32).round() as i32 + shadow_oy;
-            gfx::blit_over(&mut pm, shadow_px, ox, oy);
+        // Config `DockShadow` can turn it off (off removes any shadow band bleeding over app windows).
+        if self.cfg.dock_shadow {
+            if let Some((shadow_px, shadow_ox, shadow_oy)) = &self.dock_shadow {
+                let ox = ((pl - 12.0) * dpi as f32).round() as i32 + shadow_ox;
+                let oy = ((pt + slide as f32 - 12.0) * dpi as f32).round() as i32 + shadow_oy;
+                gfx::blit_over(&mut pm, shadow_px, ox, oy);
+            }
         }
         let plate = gfx::rrect(pl, pt, pwid, phgt, RADIUS as f32);
         // colours are (b, g, r, a): the surface is BGRA
@@ -2152,6 +2254,18 @@ impl Dock {
             if let (Some(g), Some(rim)) = (grad(0x66, 0x14), gfx::rrect(pl + inset, pt + inset, pwid - inset * 2.0, phgt - inset * 2.0, RADIUS as f32 - inset)) {
                 paint.shader = g;
                 pm.stroke_path(&rim, &paint, &hair, base, None);
+            }
+            // configurable tint over the whole plate (off by default)
+            if self.cfg.glass_opacity > 0.001 {
+                if let Some(rgb) = tint_rgb(&self.cfg.glass_tint) {
+                    let a = ((self.cfg.glass_opacity.clamp(0.0, 1.0) * 255.0).round()) as u8;
+                    if a > 0 {
+                        let mut tp = Paint::default();
+                        tp.anti_alias = true;
+                        tp.set_color(Color::from_rgba8(rgb.2, rgb.1, rgb.0, a));
+                        pm.fill_path(plate, &tp, FillRule::Winding, base, None);
+                    }
+                }
             }
         }
         for &sx in &self.seps {
